@@ -20,72 +20,33 @@
 
 #pragma once
 
-#include <evr9.h> // for IMFVideoProcessor
 #include "IVideoRenderer.h"
 #include "Helper.h"
 #include "DX9Helper.h"
 #include "DXVA2VP.h"
-#include "FrameStats.h"
 #include "D3DUtil/D3D9Font.h"
 #include "D3DUtil/D3D9Geometry.h"
+#include "VideoProcessor.h"
 
-class CMpcVideoRenderer;
 
 class CDX9VideoProcessor
-	: public IMFVideoProcessor
+	: public CVideoProcessor
 {
 private:
-	long m_nRefCount = 1;
-	CMpcVideoRenderer* m_pFilter = nullptr;
-
-	bool m_bShowStats          = false;
-	int  m_iTexFormat          = TEXFMT_AUTOINT;
-	VPEnableFormats_t m_VPFormats = {true, true, true, true};
-	bool m_bDeintDouble        = true;
-	bool m_bVPScaling          = true;
-	int  m_iChromaScaling      = CHROMA_Bilinear;
-	int  m_iUpscaling          = UPSCALE_CatmullRom; // interpolation
-	int  m_iDownscaling        = DOWNSCALE_Hamming;  // convolution
-	bool m_bInterpolateAt50pct = true;
-	bool m_bUseDither          = true;
-	int  m_iSwapEffect         = SWAPEFFECT_Discard;
-
 	// Direct3D 9
 	CComPtr<IDirect3D9Ex>            m_pD3DEx;
 	CComPtr<IDirect3DDevice9Ex>      m_pD3DDevEx;
 	CComPtr<IDirect3DDeviceManager9> m_pD3DDeviceManager;
-	UINT     m_nResetTocken = 0;
-	DWORD    m_VendorId = 0;
-	CStringW m_strAdapterDescription;
+	UINT m_nResetTocken = 0;
 
-	HWND m_hWnd = nullptr;
-	UINT m_nCurrentAdapter = D3DADAPTER_DEFAULT;
 	D3DDISPLAYMODEEX m_DisplayMode = { sizeof(D3DDISPLAYMODEEX) };
 	D3DPRESENT_PARAMETERS m_d3dpp = {};
 
 	// DXVA2 Video Processor
 	CDXVA2VP m_DXVA2VP;
-	DXVA2_ValueRange m_DXVA2ProcAmpRanges[4] = {};
-	DXVA2_ProcAmpValues m_DXVA2ProcAmpValues = {};
 
 	// Input parameters
-	FmtConvParams_t m_srcParams = {};
 	D3DFORMAT m_srcDXVA2Format = D3DFMT_UNKNOWN;
-	CopyFrameDataFn m_pConvertFn = nullptr;
-	UINT  m_srcWidth        = 0;
-	UINT  m_srcHeight       = 0;
-	UINT  m_srcRectWidth    = 0;
-	UINT  m_srcRectHeight   = 0;
-	int   m_srcPitch        = 0;
-	UINT  m_srcLines        = 0;
-	DWORD m_srcAspectRatioX = 0;
-	DWORD m_srcAspectRatioY = 0;
-	CRect m_srcRect;
-	CRect m_trgRect;
-	DXVA2_ExtendedFormat m_decExFmt = {};
-	DXVA2_ExtendedFormat m_srcExFmt = {};
-	bool  m_bInterlaced = false;
-	REFERENCE_TIME m_rtAvgTimePerFrame = 0;
 
 	// DXVA2 surface format
 	D3DFORMAT m_DXVA2OutputFmt = D3DFMT_UNKNOWN;
@@ -95,22 +56,11 @@ private:
 
 	// Processing parameters
 	DXVA2_SampleFormat m_CurrentSampleFmt = DXVA2_SampleProgressiveFrame;
-	int m_FieldDrawn = 0;
-
-	CRect m_videoRect;
-	CRect m_windowRect;
-
-	CRect m_srcRenderRect;
-	CRect m_dstRenderRect;
-
-	int m_iRotation = 0;
-	bool m_bFinalPass = false;
 
 	// D3D9 Video Processor
 	Tex9Video_t m_TexSrcVideo; // for copy of frame
-	Tex_t m_TexDxvaOutput;
 	Tex_t m_TexConvertOutput;
-	Tex_t m_TexResize;     // for intermediate result of two-pass resize
+	Tex_t m_TexResize;         // for intermediate result of two-pass resize
 	CTexRing m_TexsPostScale;
 	Tex_t m_TexDither;
 
@@ -119,6 +69,10 @@ private:
 	CComPtr<IDirect3DPixelShader9> m_pPSConvertColor;
 	struct {
 		bool bEnable = false;
+		struct ConvColorVertex_t {
+			DirectX::XMFLOAT4 Pos;
+			DirectX::XMFLOAT2 Tex[2];
+		} VertexData[4] = {};
 		float fConstants[4][4] = {};
 	} m_PSConvColorData;
 
@@ -126,30 +80,42 @@ private:
 	CComPtr<IDirect3DPixelShader9> m_pShaderUpscaleY;
 	CComPtr<IDirect3DPixelShader9> m_pShaderDownscaleX;
 	CComPtr<IDirect3DPixelShader9> m_pShaderDownscaleY;
-	const wchar_t* m_strShaderX = nullptr;
-	const wchar_t* m_strShaderY = nullptr;
 
 	std::vector<ExternalPixelShader9_t> m_pPostScaleShaders;
 	CComPtr<IDirect3DPixelShader9> m_pPSFinalPass;
 
-	CRenderStats m_RenderStats;
-	CStringW m_strStatsStatic1;
-	CStringW m_strStatsStatic2;
-	CStringW m_strStatsStatic3;
-	CStringW m_strStatsStatic4;
-	int m_iSrcFromGPU = 0;
+	// AlphaBitmap
+	Tex_t m_TexAlphaBitmap;
 
-	Tex_t m_TexStats;
-	CD3D9Font m_Font3D;
+	// Statistics
+	CD3D9Rectangle m_StatsBackground;
+	CD3D9Font      m_Font3D;
 	CD3D9Rectangle m_Rect3D;
+	CD3D9Rectangle m_Underlay;
+	CD3D9Lines     m_Lines;
+	CD3D9Polyline  m_SyncLine;
 
-	REFERENCE_TIME m_rtStart = 0;
+	CAMEvent m_evInit;
+	CAMEvent m_evResize;
+	CAMEvent m_evReset;
+	CAMEvent m_evQuit;
+	CAMEvent m_evThreadFinishJob;
+	HRESULT m_hrThread = E_FAIL;
+	bool m_bChangeDeviceThread = false;
+	std::thread m_deviceThread;
+	void DeviceThreadFunc();
+
+	HRESULT InitInternal(bool* pChangeDevice = nullptr);
+	HRESULT ResetInternal();
+	void ResizeInternal();
 
 public:
-	CDX9VideoProcessor(CMpcVideoRenderer* pFilter);
-	~CDX9VideoProcessor();
+	CDX9VideoProcessor(CMpcVideoRenderer* pFilter, HRESULT& hr);
+	~CDX9VideoProcessor() override;
 
-	HRESULT Init(const HWND hwnd, bool* pChangeDevice);
+	int Type() override { return VP_DX9; }
+
+	HRESULT Init(const HWND hwnd, bool* pChangeDevice = nullptr) override;
 	bool Initialized();
 
 private:
@@ -163,59 +129,49 @@ private:
 	HRESULT CreatePShaderFromResource(IDirect3DPixelShader9** ppPixelShader, UINT resid);
 	void SetShaderConvertColorParams();
 
-	void UpdateRenderRects();
+	void UpdateRenderRect();
+
+	void SetGraphSize() override;
 
 public:
-	BOOL VerifyMediaType(const CMediaType* pmt);
-	BOOL InitMediaType(const CMediaType* pmt);
+	BOOL VerifyMediaType(const CMediaType* pmt) override;
+	BOOL InitMediaType(const CMediaType* pmt) override;
 
-	BOOL GetAlignmentSize(const CMediaType& mt, SIZE& Size);
+	BOOL GetAlignmentSize(const CMediaType& mt, SIZE& Size) override;
 
-	void Start();
-
-	HRESULT ProcessSample(IMediaSample* pSample);
+	HRESULT ProcessSample(IMediaSample* pSample) override;
 	HRESULT CopySample(IMediaSample* pSample);
 	// Render: 1 - render first fied or progressive frame, 2 - render second fied, 0 or other - forced repeat of render.
-	HRESULT Render(int field);
-	HRESULT FillBlack();
-	bool SecondFramePossible() { return m_bDeintDouble && m_CurrentSampleFmt >= DXVA2_SampleFieldInterleavedEvenFirst && m_CurrentSampleFmt <= DXVA2_SampleFieldSingleOdd; }
+	HRESULT Render(int field) override;
+	HRESULT FillBlack() override;
 
-	void GetSourceRect(CRect& sourceRect) { sourceRect = m_srcRect; }
-	void GetVideoRect(CRect& videoRect) { videoRect = m_videoRect; }
-	void SetVideoRect(const CRect& videoRect);
-	HRESULT SetWindowRect(const CRect& windowRect);
+	void SetVideoRect(const CRect& videoRect)      override;
+	HRESULT SetWindowRect(const CRect& windowRect) override;
+	HRESULT Reset() override;
 
-	IDirect3DDeviceManager9* GetDeviceManager9() { return m_pD3DDeviceManager; }
-	HRESULT GetVideoSize(long *pWidth, long *pHeight);
-	HRESULT GetAspectRatio(long *plAspectX, long *plAspectY);
-	HRESULT GetCurentImage(long *pDIBImage);
-	HRESULT GetDisplayedImage(BYTE **ppDib, unsigned *pSize);
-	HRESULT GetVPInfo(CStringW& str);
-	ColorFormat_t GetColorFormat() { return m_srcParams.cformat; }
+	IDirect3DDeviceManager9* GetDeviceManager9() override { return m_pD3DDeviceManager; }
+	HRESULT GetCurentImage(long *pDIBImage) override;
+	HRESULT GetDisplayedImage(BYTE **ppDib, unsigned *pSize) override;
+	HRESULT GetVPInfo(std::wstring& str) override;
 
-	void SetDeintDouble(bool value) { m_bDeintDouble = value; }
-	void SetShowStats(bool value)   { m_bShowStats   = value; }
-	void SetTexFormat(int value);
-	void SetVPEnableFmts(const VPEnableFormats_t& VPFormats);
-	void SetVPScaling(bool value);
-	void SetChromaScaling(int value);
-	void SetUpscaling(int value);
-	void SetDownscaling(int value);
-	void SetInterpolateAt50pct(bool value) { m_bInterpolateAt50pct = value; }
-	void SetDither(bool value);
-	void SetSwapEffect(int value) { m_iSwapEffect = value; }
+	// Settings
+	void SetVPScaling(bool value)    override;
+	void SetChromaScaling(int value) override;
+	void SetUpscaling(int value)     override;
+	void SetDownscaling(int value)   override;
+	void SetDither(bool value)       override;
+	void SetSwapEffect(int value)    override;
 
-	void SetRotation(int value);
-	int GetRotation() { return m_iRotation; }
+	void SetRotation(int value) override;
 
-	void Flush();
+	void Flush() override;
 
-	void ClearPostScaleShaders();
-	HRESULT AddPostScaleShader(const CStringW& name, const CStringA& srcCode);
+	void ClearPostScaleShaders() override;
+	HRESULT AddPostScaleShader(const std::wstring& name, const std::string& srcCode) override;
 
 private:
-	void UpdateTexures(int w, int h);
-	void UpdatePostScaleTexures(int w, int h);
+	void UpdateTexures(SIZE texsize);
+	void UpdatePostScaleTexures(SIZE texsize);
 	void UpdateUpscalingShaders();
 	void UpdateDownscalingShaders();
 	HRESULT UpdateChromaScalingShader();
@@ -228,30 +184,20 @@ private:
 	HRESULT Process(IDirect3DSurface9* pRenderTarget, const CRect& srcRect, const CRect& dstRect, const bool second);
 
 	HRESULT TextureCopy(IDirect3DTexture9* pTexture);
-	HRESULT TextureCopyRect(IDirect3DTexture9* pTexture, const CRect& srcRect, const CRect& dstRect, D3DTEXTUREFILTERTYPE filter, const int iRotation);
-	HRESULT TextureResizeShader(IDirect3DTexture9* pTexture, const CRect& srcRect, const CRect& dstRect, IDirect3DPixelShader9* pShader, const int iRotation);
+	HRESULT TextureCopyRect(IDirect3DTexture9* pTexture, const CRect& srcRect, const CRect& dstRect,
+		D3DTEXTUREFILTERTYPE filter, const int iRotation, const bool bFlip);
+	HRESULT TextureResizeShader(IDirect3DTexture9* pTexture, const CRect& srcRect, const CRect& dstRect,
+		IDirect3DPixelShader9* pShader, const int iRotation, const bool bFlip);
 
 	void UpdateStatsStatic();
-	void UpdateStatsStatic3();
+	void UpdateStatsPostProc();
 	HRESULT DrawStats(IDirect3DSurface9* pRenderTarget);
 
 public:
-	// IUnknown
-	STDMETHODIMP QueryInterface(REFIID riid, void **ppv);
-	STDMETHODIMP_(ULONG) AddRef();
-	STDMETHODIMP_(ULONG) Release();
-
 	// IMFVideoProcessor
-	STDMETHODIMP GetAvailableVideoProcessorModes(UINT *lpdwNumProcessingModes, GUID **ppVideoProcessingModes) { return E_NOTIMPL; }
-	STDMETHODIMP GetVideoProcessorCaps(LPGUID lpVideoProcessorMode, DXVA2_VideoProcessorCaps *lpVideoProcessorCaps) { return E_NOTIMPL; }
-	STDMETHODIMP GetVideoProcessorMode(LPGUID lpMode) { return E_NOTIMPL; }
-	STDMETHODIMP SetVideoProcessorMode(LPGUID lpMode) { return E_NOTIMPL; }
-	STDMETHODIMP GetProcAmpRange(DWORD dwProperty, DXVA2_ValueRange *pPropRange);
-	STDMETHODIMP GetProcAmpValues(DWORD dwFlags, DXVA2_ProcAmpValues *Values);
-	STDMETHODIMP SetProcAmpValues(DWORD dwFlags, DXVA2_ProcAmpValues *pValues);
-	STDMETHODIMP GetFilteringRange(DWORD dwProperty, DXVA2_ValueRange *pPropRange) { return E_NOTIMPL; }
-	STDMETHODIMP GetFilteringValue(DWORD dwProperty, DXVA2_Fixed32 *pValue) { return E_NOTIMPL; }
-	STDMETHODIMP SetFilteringValue(DWORD dwProperty, DXVA2_Fixed32 *pValue) { return E_NOTIMPL; }
-	STDMETHODIMP GetBackgroundColor(COLORREF *lpClrBkg);
-	STDMETHODIMP SetBackgroundColor(COLORREF ClrBkg) { return E_NOTIMPL; }
+	STDMETHODIMP SetProcAmpValues(DWORD dwFlags, DXVA2_ProcAmpValues *pValues) override;
+
+	// IMFVideoMixerBitmap
+	STDMETHODIMP SetAlphaBitmap(const MFVideoAlphaBitmap *pBmpParms) override;
+	STDMETHODIMP UpdateAlphaBitmapParameters(const MFVideoAlphaBitmapParams *pBmpParms) override;
 };

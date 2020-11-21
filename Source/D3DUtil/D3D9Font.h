@@ -1,5 +1,5 @@
 /*
- * (C) 2019 see Authors.txt
+ * (C) 2019-2020 see Authors.txt
  *
  * This file is part of MPC-BE.
  *
@@ -22,44 +22,45 @@
 
 #include "D3DCommon.h"
 
-// Font creation flags
-#define D3DFONT_ZENABLE     0x0004
-
 // Font rendering flags
 #define D3DFONT_CENTERED_X  0x0001
 #define D3DFONT_CENTERED_Y  0x0002
-#define D3DFONT_FILTERED    0x0008
 
 class CD3D9Font
 {
 	// Font properties
-	WCHAR m_strFontName[80];
-	DWORD m_dwFontHeight;
-	DWORD m_dwFontFlags;
+	std::wstring m_strFontName;
+	DWORD m_dwFontHeight = 0;
+	DWORD m_dwFontFlags  = 0;
 
 	WCHAR m_Characters[128];
 	FloatRect m_fTexCoords[128] = {};
+	SIZE m_MaxCharMetric = {};
 
 	IDirect3DDevice9*       m_pd3dDevice    = nullptr; // A D3DDevice used for rendering
 	IDirect3DTexture9*      m_pTexture      = nullptr; // The d3d texture for this font
 	IDirect3DVertexBuffer9* m_pVertexBuffer = nullptr; // VertexBuffer for rendering text
+	D3DCAPS9 m_D3DCaps = {};
 	UINT  m_uTexWidth  = 0;                   // Texture dimensions
 	UINT  m_uTexHeight = 0;
-	float m_fTextScale = 1.0f;
 
 	// Stateblocks for setting and restoring render states
-	IDirect3DStateBlock9* m_pStateBlockSaved    = nullptr;
+	IDirect3DStateBlock9* m_pStateBlockSaved = nullptr;
 	IDirect3DStateBlock9* m_pStateBlockDrawText = nullptr;
 	HRESULT CreateStateBlocks();
 
 public:
 	// Constructor / destructor
-	CD3D9Font(const WCHAR* strFontName, const DWORD dwHeight, const DWORD dwFlags=0L);
+	CD3D9Font();
 	~CD3D9Font();
 
 	// Initializing and destroying device-dependent objects
 	HRESULT InitDeviceObjects(IDirect3DDevice9* pd3dDevice);
 	void InvalidateDeviceObjects();
+
+	HRESULT CreateFontBitmap(const WCHAR* strFontName, const DWORD dwHeight, const DWORD dwFlags);
+
+	SIZE GetMaxCharMetric();
 
 	// Function to get extent of text
 	HRESULT GetTextExtent(const WCHAR* strText, SIZE* pSize);

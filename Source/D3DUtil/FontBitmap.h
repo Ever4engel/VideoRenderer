@@ -23,8 +23,8 @@
 #include "D3DCommon.h"
 
 #ifndef FONTBITMAP_MODE
-#define FONTBITMAP_MODE 1
-// 0 - GDI, 1 - GDI+, 2 - DirectWrite
+#define FONTBITMAP_MODE 2
+// 0 - GDI, 1 - GDI+ (no longer supported), 2 - DirectWrite
 #endif
 
 #define DUMP_BITMAP 0
@@ -69,6 +69,7 @@ private:
 	UINT m_bmWidth = 0;
 	UINT m_bmHeight = 0;
 	std::vector<RECT> m_charCoords;
+	SIZE m_MaxCharMetric = {};
 
 public:
 	CFontBitmapGDI()
@@ -125,8 +126,9 @@ public:
 		}
 
 		if (S_OK == hr) {
-			UINT stepX = maxWidth + 2;
-			UINT stepY = maxHeight;
+			m_MaxCharMetric = { maxWidth, maxHeight };
+			UINT stepX = m_MaxCharMetric.cx + 2;
+			UINT stepY = m_MaxCharMetric.cy;
 			UINT bmWidth = 128;
 			UINT bmHeight = 128;
 			UINT columns = bmWidth / stepX;
@@ -205,7 +207,7 @@ public:
 
 #if _DEBUG && DUMP_BITMAP
 		if (S_OK == hr) {
-			SaveARGB32toBMP((BYTE*)m_pBitmapBits, m_bmWidth * 4, m_bmWidth, m_bmHeight, L"c:\\temp\\font_gdi_bitmap.bmp");
+			SaveToBMP((BYTE*)m_pBitmapBits, m_bmWidth * 4, m_bmWidth, m_bmHeight, 32, L"c:\\temp\\font_gdi_bitmap.bmp");
 		}
 #endif
 
@@ -220,6 +222,11 @@ public:
 	UINT GetHeight()
 	{
 		return m_bmHeight;
+	}
+
+	SIZE GetMaxCharMetric()
+	{
+		return m_MaxCharMetric;
 	}
 
 	HRESULT GetFloatCoords(FloatRect* pTexCoords, const UINT lenght)
@@ -262,271 +269,6 @@ public:
 
 typedef CFontBitmapGDI CFontBitmap;
 
-#elif FONTBITMAP_MODE == 1
-
-#include <gdiplus.h>
-
-class CFontBitmapGDIPlus
-{
-private:
-	// GDI+ handling
-	ULONG_PTR m_gdiplusToken;
-	Gdiplus::GdiplusStartupInput m_gdiplusStartupInput;
-
-	const Gdiplus::TextRenderingHint m_TextRenderingHint = Gdiplus::TextRenderingHintClearTypeGridFit;
-	// TextRenderingHintClearTypeGridFit gives a better result than TextRenderingHintAntiAliasGridFit
-	// Perhaps this is only for normal thickness. Because subpixel anti-aliasing we lose after copying to the texture.
-
-	Gdiplus::Bitmap* m_pBitmap = nullptr;
-	std::vector<RECT> m_charCoords;
-
-	Gdiplus::BitmapData m_bitmapData;
-
-public:
-	CFontBitmapGDIPlus()
-	{
-		// GDI+ handling
-		GdiplusStartup(&m_gdiplusToken, &m_gdiplusStartupInput, nullptr);
-	}
-
-	~CFontBitmapGDIPlus()
-	{
-		SAFE_DELETE(m_pBitmap);
-
-		// GDI+ handling
-		Gdiplus::GdiplusShutdown(m_gdiplusToken);
-	}
-
-	HRESULT Initialize(const WCHAR* fontName, const int fontHeight, DWORD fontFlags, const WCHAR* chars, UINT lenght)
-	{
-		SAFE_DELETE(m_pBitmap);
-		m_charCoords.clear();
-
-		auto status = Gdiplus::Ok;
-
-		Gdiplus::FontStyle fontstyle =
-			((fontFlags & (D3DFONT_BOLD | D3DFONT_ITALIC)) == (D3DFONT_BOLD | D3DFONT_ITALIC)) ? Gdiplus::FontStyleBoldItalic :
-			(fontFlags & D3DFONT_BOLD) ? Gdiplus::FontStyleBold :
-			(fontFlags & D3DFONT_ITALIC) ? Gdiplus::FontStyleItalic :
-			Gdiplus::FontStyleRegular;
-
-		Gdiplus::FontFamily fontFamily(fontName);
-		Gdiplus::Font font(&fontFamily, fontHeight, fontstyle, Gdiplus::UnitPixel);
-
-		auto pStringFormat = Gdiplus::StringFormat::GenericTypographic();
-		Gdiplus::StringFormat stringFormat(pStringFormat);
-		auto flags = stringFormat.GetFormatFlags() | Gdiplus::StringFormatFlags::StringFormatFlagsMeasureTrailingSpaces;
-		stringFormat.SetFormatFlags(flags);
-
-		Gdiplus::Bitmap testBitmap(32, 32, PixelFormat32bppARGB); // bitmap dimensions are not important here
-		Gdiplus::Graphics testGraphics(&testBitmap);
-		testGraphics.SetTextRenderingHint(m_TextRenderingHint);
-
-		std::vector<SIZE> charSizes;
-		charSizes.reserve(lenght);
-		Gdiplus::RectF rectf;
-		float maxWidth = 0;
-		float maxHeight = 0;
-
-		Gdiplus::PointF origin;
-
-		for (UINT i = 0; i < lenght; i++) {
-			status = testGraphics.MeasureString(&chars[i], 1, &font, origin, &stringFormat, &rectf);
-			if (Gdiplus::Ok != status) {
-				break;
-			}
-			SIZE size = { (LONG)ceil(rectf.Width), (LONG)ceil(rectf.Height) };
-			charSizes.emplace_back(size);
-
-			if (rectf.Width > maxWidth) {
-				maxWidth = rectf.Width;
-			}
-			if (rectf.Height > maxHeight) {
-				maxHeight = rectf.Height;
-			}
-			ASSERT(rectf.X == 0 && rectf.Y == 0);
-		}
-
-		if (Gdiplus::Ok == status) {
-			UINT stepX = (UINT)ceil(maxWidth) + 2;
-			UINT stepY = (UINT)ceil(maxHeight);
-			UINT bmWidth = 128;
-			UINT bmHeight = 128;
-			UINT columns = bmWidth / stepX;
-			UINT lines = bmHeight / stepY;
-
-			while (lenght > lines * columns) {
-				if (bmWidth <= bmHeight) {
-					bmWidth *= 2;
-				} else {
-					bmHeight += 128;
-				}
-				columns = bmWidth / stepX;
-				lines = bmHeight / stepY;
-			};
-
-			m_pBitmap = new Gdiplus::Bitmap(bmWidth, bmHeight, PixelFormat32bppARGB);
-			Gdiplus::Graphics graphics(m_pBitmap);
-			graphics.SetTextRenderingHint(m_TextRenderingHint);
-			Gdiplus::SolidBrush brushWhite(Gdiplus::Color::White);
-
-			m_charCoords.reserve(lenght);
-
-			UINT idx = 0;
-			for (UINT y = 0; y < lines; y++) {
-				for (UINT x = 0; x < columns; x++) {
-					if (idx >= lenght) {
-						break;
-					}
-					UINT X = x * stepX + 1;
-					UINT Y = y * stepY;
-					status = graphics.DrawString(&chars[idx], 1, &font, Gdiplus::PointF(X, Y), &stringFormat, &brushWhite);
-					if (Gdiplus::Ok != status) {
-						break;
-					}
-					RECT rect = {
-						X,
-						Y,
-						X + charSizes[idx].cx,
-						Y + charSizes[idx].cy
-					};
-					m_charCoords.emplace_back(rect);
-					idx++;
-				}
-			}
-			graphics.Flush();
-		}
-
-		if (Gdiplus::Ok == status) {
-			ASSERT(m_charCoords.size() == lenght);
-#if _DEBUG && DUMP_BITMAP
-			SaveBitmap(L"C:\\TEMP\\font_gdiplus_bitmap.png");
-#endif
-			return S_OK;
-		}
-		return E_FAIL;
-	}
-
-	UINT GetWidth()
-	{
-		return m_pBitmap ? m_pBitmap->GetWidth() : 0;
-	}
-
-	UINT GetHeight()
-	{
-		return m_pBitmap ? m_pBitmap->GetHeight() : 0;
-	}
-
-	HRESULT GetFloatCoords(FloatRect* pTexCoords, const UINT lenght)
-	{
-		ASSERT(pTexCoords);
-
-		if (!m_pBitmap || lenght != m_charCoords.size()) {
-			return E_ABORT;
-		}
-
-		auto w = m_pBitmap->GetWidth();
-		auto h = m_pBitmap->GetHeight();
-
-		for (const auto coord : m_charCoords) {
-			*pTexCoords++ = {
-				(float)coord.left   / w,
-				(float)coord.top    / h,
-				(float)coord.right  / w,
-				(float)coord.bottom / h,
-			};
-		}
-
-		return S_OK;
-	}
-
-	HRESULT Lock(BYTE** ppData, UINT& uStride)
-	{
-		if (!m_pBitmap) {
-			return E_ABORT;
-		}
-
-		const UINT w = m_pBitmap->GetWidth();
-		const UINT h = m_pBitmap->GetHeight();
-		Gdiplus::Rect rect(0, 0, w, h);
-
-		Gdiplus::Status status = m_pBitmap->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &m_bitmapData);
-
-		if (Gdiplus::Ok == status) {
-			*ppData = (BYTE*)m_bitmapData.Scan0;
-			uStride = m_bitmapData.Stride;
-
-			return S_OK;
-		}
-
-		return E_FAIL;
-	}
-
-	void Unlock()
-	{
-		if (m_pBitmap) {
-			m_pBitmap->UnlockBits(&m_bitmapData);
-		}
-	}
-
-private:
-	HRESULT SaveBitmap(const WCHAR* filename)
-	{
-		if (!m_pBitmap) {
-			return E_ABORT;
-		}
-
-		const WCHAR* mimetype = nullptr;
-
-		if (auto ext = wcsrchr(filename, '.')) {
-			// the "count" parameter for "_wcsnicmp" function must be greater than the length of the short string to be compared
-			if (_wcsnicmp(ext, L".bmp", 8) == 0) {
-				mimetype = L"image/bmp";
-			}
-			else if (_wcsnicmp(ext, L".png", 8) == 0) {
-				mimetype = L"image/png";
-			}
-		}
-
-		if (!mimetype) {
-			return E_INVALIDARG;
-		}
-
-		UINT num = 0;  // number of image encoders
-		UINT size = 0; // size of the image encoder array in bytes
-		Gdiplus::GetImageEncodersSize(&num, &size);
-		if (size == 0) {
-			return E_FAIL;  // Failure
-		}
-
-		Gdiplus::ImageCodecInfo* pImageCodecInfo = nullptr;
-		pImageCodecInfo = (Gdiplus::ImageCodecInfo*)(malloc(size));
-		if (pImageCodecInfo == nullptr) {
-			return E_FAIL;
-		}
-
-		Gdiplus::GetImageEncoders(num, size, pImageCodecInfo);
-		CLSID clsidEncoder = CLSID_NULL;
-
-		for (UINT j = 0; j < num; ++j) {
-			if (wcscmp(pImageCodecInfo[j].MimeType, mimetype) == 0) {
-				clsidEncoder = pImageCodecInfo[j].Clsid;
-				break;
-			}
-		}
-		free(pImageCodecInfo);
-		if (clsidEncoder == CLSID_NULL) {
-			return E_FAIL;
-		}
-
-		Gdiplus::Status status = m_pBitmap->Save(filename, &clsidEncoder, nullptr);
-
-		return (Gdiplus::Ok == status) ? S_OK : E_FAIL;
-	}
-};
-
-typedef CFontBitmapGDIPlus CFontBitmap;
-
 #elif FONTBITMAP_MODE == 2
 
 #include <dwrite.h>
@@ -543,6 +285,7 @@ private:
 	CComPtr<IWICBitmap>     m_pWICBitmap;
 	CComPtr<IWICBitmapLock> m_pWICBitmapLock;
 	std::vector<RECT> m_charCoords;
+	SIZE m_MaxCharMetric = {};
 
 public:
 	CFontBitmapDWrite()
@@ -553,16 +296,23 @@ public:
 			{ D2D1_DEBUG_LEVEL_INFORMATION },
 #endif
 			&m_pD2D1Factory);
+		DLogIf(FAILED(hr), L"D2D1CreateFactory() failed with error {}", HR2Str(hr));
 
-		hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(m_pDWriteFactory), reinterpret_cast<IUnknown**>(&m_pDWriteFactory));
+		if (SUCCEEDED(hr)) {
+			hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(m_pDWriteFactory), reinterpret_cast<IUnknown**>(&m_pDWriteFactory));
+			DLogIf(FAILED(hr), L"DWriteCreateFactory() failed with error {}", HR2Str(hr));
+		}
 
-		hr = CoCreateInstance(
-			CLSID_WICImagingFactory,
-			nullptr,
-			CLSCTX_INPROC_SERVER,
-			IID_IWICImagingFactory,
-			(LPVOID*)&m_pWICFactory
-		);
+		if (SUCCEEDED(hr)) {
+			hr = CoCreateInstance(
+				CLSID_WICImagingFactory1, // we use CLSID_WICImagingFactory1 to support Windows 7 without Platform Update
+				nullptr,
+				CLSCTX_INPROC_SERVER,
+				IID_IWICImagingFactory,
+				(LPVOID*)&m_pWICFactory
+			);
+			DLogIf(FAILED(hr), L"CoCreateInstance(WICImagingFactory) failed with error {}", HR2Str(hr));
+		}
 	}
 
 	~CFontBitmapDWrite()
@@ -577,6 +327,10 @@ public:
 
 	HRESULT Initialize(const WCHAR* fontName, const int fontHeight, DWORD fontFlags, const WCHAR* chars, UINT lenght)
 	{
+		if (!m_pWICFactory) {
+			return E_ABORT;
+		}
+
 		m_pWICBitmapLock.Release();
 		m_pWICBitmap.Release();
 		m_charCoords.clear();
@@ -625,8 +379,9 @@ public:
 		}
 
 		if (S_OK == hr) {
-			UINT stepX = (UINT)ceil(maxWidth) + 2;
-			UINT stepY = (UINT)ceil(maxHeight);
+			m_MaxCharMetric = { (LONG)ceil(maxWidth), (LONG)ceil(maxHeight) };
+			UINT stepX = m_MaxCharMetric.cx + 2;
+			UINT stepY = m_MaxCharMetric.cy;
 			UINT bmWidth = 128;
 			UINT bmHeight = 128;
 			UINT columns = bmWidth / stepX;
@@ -725,6 +480,11 @@ public:
 		}
 
 		return 0;
+	}
+
+	SIZE GetMaxCharMetric()
+	{
+		return m_MaxCharMetric;
 	}
 
 	HRESULT GetFloatCoords(FloatRect* pTexCoords, const UINT lenght)

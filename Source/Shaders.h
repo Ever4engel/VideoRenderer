@@ -1,5 +1,5 @@
 /*
-* (C) 2019 see Authors.txt
+* (C) 2019-2020 see Authors.txt
 *
 * This file is part of MPC-BE.
 *
@@ -22,11 +22,12 @@
 
 #include <d3dcommon.h>
 
-HRESULT CompileShader(const CStringA& srcCode, const D3D_SHADER_MACRO* pDefines, LPCSTR pTarget, ID3DBlob** ppCode);
+HRESULT CompileShader(const std::string& srcCode, const D3D_SHADER_MACRO* pDefines, LPCSTR pTarget, ID3DBlob** ppCode);
 
 HRESULT GetShaderConvertColor(
 	const bool bDX11,
-	const UINT texW, UINT texH,
+	const long texW, long texH,
+	const RECT rect,
 	const FmtConvParams_t& fmtParams,
 	const DXVA2_ExtendedFormat exFmt,
 	const int chromaScaling,

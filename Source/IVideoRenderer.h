@@ -1,5 +1,5 @@
 /*
- * (C) 2018-2019 see Authors.txt
+ * (C) 2018-2020 see Authors.txt
  *
  * This file is part of MPC-BE.
  *
@@ -30,7 +30,8 @@ enum :int {
 };
 
 enum :int {
-	CHROMA_Bilinear = 0,
+	CHROMA_Nearest = 0,
+	CHROMA_Bilinear,
 	CHROMA_CatmullRom,
 	CHROMA_COUNT,
 };
@@ -71,6 +72,7 @@ struct VPEnableFormats_t {
 struct Settings_t {
 	bool bUseD3D11;
 	bool bShowStats;
+	int  iResizeStats;
 	int  iTextureFmt;
 	VPEnableFormats_t VPFmts;
 	bool bDeintDouble;
@@ -81,6 +83,7 @@ struct Settings_t {
 	bool bInterpolateAt50pct;
 	bool bUseDither;
 	int  iSwapEffect;
+	bool bExclusiveFS;
 
 	Settings_t() {
 		SetDefault();
@@ -89,6 +92,7 @@ struct Settings_t {
 	void SetDefault() {
 		bUseD3D11           = false;
 		bShowStats          = false;
+		iResizeStats        = 0;
 		iTextureFmt         = TEXFMT_AUTOINT;
 		VPFmts.bNV12        = true;
 		VPFmts.bP01x        = true;
@@ -102,12 +106,13 @@ struct Settings_t {
 		bInterpolateAt50pct = true;
 		bUseDither          = true;
 		iSwapEffect         = SWAPEFFECT_Discard;
+		bExclusiveFS        = false;
 	}
 };
 
 interface __declspec(uuid("1AB00F10-5F55-42AC-B53F-38649F11BE3E"))
 IVideoRenderer : public IUnknown {
-	STDMETHOD(GetVideoProcessorInfo) (CStringW& str) PURE;
+	STDMETHOD(GetVideoProcessorInfo) (std::wstring& str) PURE;
 	STDMETHOD_(bool, GetActive()) PURE;
 
 	STDMETHOD_(void, GetSettings(Settings_t& setings)) PURE;

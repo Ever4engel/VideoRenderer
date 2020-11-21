@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <atltypes.h>
-#include <d3d9.h>
 #include <mfidl.h>
 #include <dxva2api.h>
 #include <thread>
@@ -32,10 +30,6 @@
 #include "../Include/ISubRender.h"
 #include "../Include/FilterInterfacesImpl.h"
 
-#define STATS_X  10
-#define STATS_Y  10
-#define STATS_W 512
-#define STATS_H 270
 
 const AMOVIESETUP_MEDIATYPE sudPinTypesIn[] = {
 	{&MEDIATYPE_Video, &MEDIASUBTYPE_YV12},
@@ -59,7 +53,7 @@ const AMOVIESETUP_MEDIATYPE sudPinTypesIn[] = {
 	{&MEDIATYPE_Video, &MEDIASUBTYPE_b64a},
 	{&MEDIATYPE_Video, &MEDIASUBTYPE_Y8},
 	{&MEDIATYPE_Video, &MEDIASUBTYPE_Y800},
-	{&MEDIATYPE_Video, &MEDIASUBTYPE_Y116},
+	{&MEDIATYPE_Video, &MEDIASUBTYPE_Y16},
 };
 
 class CVideoRendererInputPin;
@@ -78,39 +72,36 @@ class __declspec(uuid("71F080AA-8661-4093-B15E-4F6903E77D0A"))
 {
 private:
 	friend class CVideoRendererInputPin;
+	friend class CVideoProcessor;
 	friend class CDX9VideoProcessor;
 	friend class CDX11VideoProcessor;
 
 	// Options
 	Settings_t m_Sets;
 
-	bool m_bUsedD3D11 = false; // current state
 	FILTER_STATE m_filterState = State_Stopped;
+	bool m_bFlushing = false;
+	bool m_bValidBuffer = false;
 
-	HWND m_hWnd = nullptr;
-	HWND m_hWndParent = nullptr;
+	HWND m_hWnd           = nullptr;
+	HWND m_hWndWindow     = nullptr;
+	HWND m_hWndParent     = nullptr;
+	HWND m_hWndDrain      = nullptr;
+	HWND m_hWndParentMain = nullptr;
+
+	HMONITOR m_hMon = nullptr;
+	bool m_bPrimaryDisplay = false;
+	DisplayConfig_t m_DisplayConfig = {};
 
 	int m_Stepping = 0;
 	REFERENCE_TIME m_rtStartTime = 0;
 
-	// DXVA2 VideoProcessor
-	CDX9VideoProcessor m_DX9_VP;
-
-	// D3D11 VideoProcessor
-	CDX11VideoProcessor m_DX11_VP;
+	// VideoProcessor
+	CVideoProcessor* m_VideoProcessor = nullptr;
 
 	CMediaType m_inputMT;
 
 	ISubRenderCallback* m_pSubCallBack = nullptr;
-
-	CAMEvent m_evDX9Init;
-	CAMEvent m_evDX9InitHwnd;
-	CAMEvent m_evDX9Resize;
-	CAMEvent m_evQuit;
-	CAMEvent m_evThreadFinishJob;
-	HRESULT m_hrThread = E_FAIL;
-	std::thread m_DX9Thread;
-	void DX9Thread();
 
 	CRect m_windowRect, m_videoRect;
 
@@ -119,7 +110,7 @@ private:
 	bool m_bSubInvAlpha = false;
 	bool m_bCheckSubInvAlpha = false;
 
-	bool m_bFlushing = false;
+	HRESULT Init(const bool bCreateWindow);
 
 public:
 	CMpcVideoRenderer(LPUNKNOWN pUnk, HRESULT* phr);
@@ -136,6 +127,10 @@ public:
 
 	HRESULT BeginFlush() override;
 	HRESULT EndFlush() override;
+
+	void UpdateDiplayInfo();
+	void OnDisplayModeChange(const bool bReset = false);
+	void OnWindowMove();
 
 	DECLARE_IUNKNOWN
 	STDMETHODIMP NonDelegatingQueryInterface(REFIID riid, void** ppv);
@@ -221,8 +216,8 @@ public:
 	STDMETHODIMP get_Height(long *pHeight) { return E_NOTIMPL; }
 	STDMETHODIMP put_Owner(OAHWND Owner);
 	STDMETHODIMP get_Owner(OAHWND *Owner);
-	STDMETHODIMP put_MessageDrain(OAHWND Drain) { return E_NOTIMPL; }
-	STDMETHODIMP get_MessageDrain(OAHWND *Drain) { return E_NOTIMPL; }
+	STDMETHODIMP put_MessageDrain(OAHWND Drain);
+	STDMETHODIMP get_MessageDrain(OAHWND* Drain);
 	STDMETHODIMP get_BorderColor(long *Color) { return E_NOTIMPL; }
 	STDMETHODIMP put_BorderColor(long Color) { return E_NOTIMPL; }
 	STDMETHODIMP get_FullScreenMode(long *FullScreenMode) { return E_NOTIMPL; }
@@ -241,7 +236,7 @@ public:
 	STDMETHODIMP GetPages(CAUUID* pPages);
 
 	// IVideoRenderer
-	STDMETHODIMP GetVideoProcessorInfo(CStringW& str);
+	STDMETHODIMP GetVideoProcessorInfo(std::wstring& str);
 	STDMETHODIMP_(bool) GetActive();
 
 	STDMETHODIMP_(void) GetSettings(Settings_t& setings);
@@ -262,6 +257,13 @@ public:
 	STDMETHODIMP SetInt(LPCSTR field, int value) override;
 	STDMETHODIMP SetBin(LPCSTR field, LPVOID value, int size) override;
 
+	LRESULT OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+	void SwitchFullScreen();
+
+	bool m_bIsFullscreen = false;
+
 private:
 	HRESULT Redraw();
+	void DoAfterChangingDevice();
 };

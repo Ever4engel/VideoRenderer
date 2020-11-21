@@ -20,10 +20,9 @@
 
 #pragma once
 
-#include <atltypes.h>
 #include <d3d11.h>
 
-class VideoTextureBuffer // TODO
+class VideoTextureBuffer
 {
 private:
 	std::vector<ID3D11Texture2D*> m_Textures;
@@ -126,9 +125,12 @@ private:
 	UINT m_nPastFrames        = 0;
 	UINT m_nFutureFrames      = 0;
 
-	// ProcAmp
-	D3D11_VIDEO_PROCESSOR_FILTER_RANGE m_VPFilterRange[4] = {};
-	int m_VPFilterLevels[4] = {};
+	// Filters
+	struct {
+		int support;
+		int value;
+		D3D11_VIDEO_PROCESSOR_FILTER_RANGE range;
+	} m_VPFilters[6] = {};
 	bool m_bUpdateFilters = false;
 
 	D3D11_VIDEO_PROCESSOR_ROTATION m_Rotation = D3D11_VIDEO_PROCESSOR_ROTATION_IDENTITY;

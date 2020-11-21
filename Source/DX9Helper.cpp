@@ -1,5 +1,5 @@
 /*
-* (C) 2019 see Authors.txt
+* (C) 2019-2020 see Authors.txt
 *
 * This file is part of MPC-BE.
 *
@@ -22,7 +22,6 @@
 
 #include "stdafx.h"
 #include <memory>
-#include <d3d9.h>
 #include "Helper.h"
 #include "DX9Helper.h"
 
@@ -69,7 +68,7 @@ HRESULT Dump4ByteSurface(IDirect3DSurface9* pSurface, const wchar_t* filename)
 			hr = pSurfaceShared->LockRect(&lr, nullptr, D3DLOCK_READONLY);
 
 			if (SUCCEEDED(hr)) {
-				hr = SaveARGB32toBMP((BYTE*)lr.pBits, lr.Pitch, desc.Width, desc.Height, filename);
+				hr = SaveToBMP((BYTE*)lr.pBits, lr.Pitch, desc.Width, desc.Height, 32, filename);
 				pSurfaceShared->UnlockRect();
 			}
 		}
@@ -127,7 +126,7 @@ HRESULT DumpDX9Surface(IDirect3DSurface9* pSurface, const wchar_t* filename)
 	}
 
 	BITMAPINFOHEADER* bih = (BITMAPINFOHEADER*)dib.get();
-	memset(bih, 0, sizeof(BITMAPINFOHEADER));
+	ZeroMemory(bih, sizeof(BITMAPINFOHEADER));
 	bih->biSize = sizeof(BITMAPINFOHEADER);
 	bih->biWidth = desc.Width;
 	bih->biHeight = desc.Height;

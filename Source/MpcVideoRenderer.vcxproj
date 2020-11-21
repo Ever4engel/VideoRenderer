@@ -51,7 +51,6 @@
       <AdditionalDependencies>Winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>MpcVideoRenderer.def</ModuleDefinitionFile>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
-      <DelayLoadDLLs>gdiplus.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
     </Link>
     <PreBuildEvent>
       <Command>..\update_revision.cmd</Command>
@@ -70,13 +69,14 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="CPUInfo.cpp" />
     <ClCompile Include="csputils.cpp" />
     <ClCompile Include="CustomAllocator.cpp" />
     <ClCompile Include="D3D11VP.cpp" />
     <ClCompile Include="D3DUtil\D3D11Font.cpp" />
     <ClCompile Include="D3DUtil\D3D11Geometry.cpp" />
     <ClCompile Include="D3DUtil\D3D9Font.cpp" />
+    <ClCompile Include="D3DUtil\D3D9Geometry.cpp" />
+    <ClCompile Include="DisplayConfig.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="DX11Helper.cpp" />
     <ClCompile Include="DX11VideoProcessor.cpp" />
@@ -85,18 +85,22 @@
     <ClCompile Include="DX9VideoProcessor.cpp" />
     <ClCompile Include="DXVA2VP.cpp" />
     <ClCompile Include="Helper.cpp" />
+    <ClCompile Include="MediaSampleSideData.cpp" />
     <ClCompile Include="PropPage.cpp" />
     <ClCompile Include="renbase2.cpp" />
     <ClCompile Include="Shaders.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="Time.cpp" />
+    <ClCompile Include="Times.cpp" />
+    <ClCompile Include="Utils\CPUInfo.cpp" />
+    <ClCompile Include="Utils\StringUtil.cpp" />
+    <ClCompile Include="Utils\Util.cpp" />
+    <ClCompile Include="VideoProcessor.cpp" />
     <ClCompile Include="VideoRenderer.cpp" />
     <ClCompile Include="VideoRendererInputPin.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CPUInfo.h" />
     <ClInclude Include="csputils.h" />
     <ClInclude Include="CustomAllocator.h" />
     <ClInclude Include="D3D11VP.h" />
@@ -105,6 +109,7 @@
     <ClInclude Include="D3DUtil\D3D9Font.h" />
     <ClInclude Include="D3DUtil\D3D9Geometry.h" />
     <ClInclude Include="D3DUtil\D3DCommon.h" />
+    <ClInclude Include="DisplayConfig.h" />
     <ClInclude Include="DX11Helper.h" />
     <ClInclude Include="DX11VideoProcessor.h" />
     <ClInclude Include="DX9Device.h" />
@@ -115,18 +120,29 @@
     <ClInclude Include="FrameStats.h" />
     <ClInclude Include="Helper.h" />
     <ClInclude Include="IVideoRenderer.h" />
+    <ClInclude Include="MediaSampleSideData.h" />
     <ClInclude Include="PropPage.h" />
     <ClInclude Include="renbase2.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="Shaders.h" />
     <ClInclude Include="stdafx.h" />
-    <ClInclude Include="Time.h" />
+    <ClInclude Include="Times.h" />
+    <ClInclude Include="Utils\CPUInfo.h" />
+    <ClInclude Include="Utils\StringUtil.h" />
+    <ClInclude Include="Utils\Util.h" />
+    <ClInclude Include="VideoProcessor.h" />
     <ClInclude Include="VideoRenderer.h" />
     <ClInclude Include="VideoRendererInputPin.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BaseClasses\BaseClasses.vcxproj">
       <Project>{e8a3f6fa-ae1c-4c8e-a0b6-9c8480324eaa}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\external\fmt.vcxproj">
+      <Project>{cf8302e6-21a3-4dd3-8a33-e19b6732f40b}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\external\minhook.vcxproj">
+      <Project>{303b855a-137d-45e9-af6d-b7241c6e66d6}</Project>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>

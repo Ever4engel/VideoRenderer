@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <d3d11.h>
+#include <d3d11_1.h>
 
 enum Tex2DType {
 	Tex2D_Default,
@@ -207,6 +207,10 @@ public:
 		return hr;
 	}
 
+	UINT Size() {
+		return size;
+	}
+
 	void Release() {
 		Texs[0].Release();
 		Texs[1].Release();
@@ -227,7 +231,7 @@ public:
 
 struct ExternalPixelShader11_t
 {
-	CStringW name; // TODO
+	std::wstring name;
 	CComPtr<ID3D11PixelShader> shader;
 };
 
@@ -243,4 +247,4 @@ inline DirectX::XMFLOAT4 D3DCOLORtoXMFLOAT4(const D3DCOLOR color)
 
 UINT GetAdapter(HWND hWnd, IDXGIFactory1* pDXGIFactory, IDXGIAdapter** ppDXGIAdapter);
 
-HRESULT Dump4ByteTexture2D(ID3D11DeviceContext* pDeviceContext, ID3D11Texture2D* pTexture2D, const wchar_t* filename);
+HRESULT DumpTexture2D(ID3D11DeviceContext* pDeviceContext, ID3D11Texture2D* pTexture2D, const wchar_t* filename);

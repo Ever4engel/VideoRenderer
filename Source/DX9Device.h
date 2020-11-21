@@ -1,5 +1,5 @@
 /*
-* (C) 2019 see Authors.txt
+* (C) 2019-2020 see Authors.txt
 *
 * This file is part of MPC-BE.
 *
@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <atltypes.h>
+#include <thread>
 
 class CDX9Device
 {
@@ -30,6 +30,17 @@ private:
 	UINT    m_nResetTocken = 0;
 
 	UINT m_nCurrentAdapter9 = D3DADAPTER_DEFAULT;
+	HWND m_hDX9Wnd = nullptr;
+
+	CAMEvent m_evInit;
+	CAMEvent m_evQuit;
+	CAMEvent m_evThreadFinishJob;
+	HRESULT m_hrThread = E_FAIL;
+	bool m_bChangeDeviceThread = false;
+	std::thread m_deviceThread;
+	void DeviceThreadFunc();
+
+	HRESULT InitDX9DeviceInternal(bool* pChangeDevice);
 
 protected:
 	D3DDISPLAYMODEEX m_DisplayMode = { sizeof(D3DDISPLAYMODEEX) };
@@ -37,12 +48,11 @@ protected:
 	D3DFORMAT m_srcDXVA2Format = D3DFMT_UNKNOWN;
 	D3DPRESENT_PARAMETERS m_d3dpp = {};
 
-public:
 	CDX9Device();
 	~CDX9Device();
 
-	IDirect3DDeviceManager9* GetDeviceManager9() { return m_pD3DDeviceManager; }
+	IDirect3DDeviceManager9* GetDevMan9() { return m_pD3DDeviceManager; }
 
-	HRESULT InitDX9Device(const HWND hwnd, bool* pChangeDevice);
+	HRESULT InitDX9Device(const HWND hwnd, bool* pChangeDevice = nullptr);
 	void ReleaseDX9Device();
 };

@@ -27,9 +27,12 @@
 #include "../Include/Version.h"
 #include "VideoRenderer.h"
 
+#define WM_SWITCH_FULLSCREEN (WM_APP + 0x1000)
+
 #define OPT_REGKEY_VIDEORENDERER L"Software\\MPC-BE Filters\\MPC Video Renderer"
 #define OPT_UseD3D11             L"UseD3D11"
 #define OPT_ShowStatistics       L"ShowStatistics"
+#define OPT_ResizeStatistics     L"ResizeStatistics"
 #define OPT_TextureFormat        L"TextureFormat"
 #define OPT_VPEnableNV12         L"VPEnableNV12"
 #define OPT_VPEnableP01x         L"VPEnableP01x"
@@ -37,14 +40,68 @@
 #define OPT_VPEnableOther        L"VPEnableOther"
 #define OPT_DoubleFrateDeint     L"DoubleFramerateDeinterlace"
 #define OPT_VPScaling            L"VPScaling"
-#define OPT_ChromaScaling        L"ChromaScaling"
+#define OPT_ChromaUpsampling     L"ChromaUpsampling"
 #define OPT_Upscaling            L"Upscaling"
 #define OPT_Downscaling          L"Downscaling"
 #define OPT_InterpolateAt50pct   L"InterpolateAt50pct"
 #define OPT_Dither               L"Dither"
 #define OPT_SwapEffect           L"SwapEffect"
+#define OPT_ExclusiveFullscreen  L"ExclusiveFullscreen"
 
 static const wchar_t g_szClassName[] = L"VRWindow";
+
+LPCTSTR g_pszOldParentWndProc = L"OldParentWndProc";
+LPCTSTR g_pszThis = L"This";
+static void RemoveParentWndProc(HWND hWnd)
+{
+	DLog(L"RemoveParentWndProc()");
+	auto pfnOldProc = (WNDPROC)GetPropW(hWnd, g_pszOldParentWndProc);
+	if (pfnOldProc) {
+		SetWindowLongPtrW(hWnd, GWLP_WNDPROC, (LONG_PTR)pfnOldProc);
+		RemovePropW(hWnd, g_pszOldParentWndProc);
+		RemovePropW(hWnd, g_pszThis);
+	}
+}
+
+static LRESULT CALLBACK ParentWndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+	auto pfnOldProc = (WNDPROC)GetPropW(hWnd, g_pszOldParentWndProc);
+	auto pThis = static_cast<CMpcVideoRenderer*>(GetPropW(hWnd, g_pszThis));
+
+	switch (Msg) {
+		case WM_DESTROY:
+			SetWindowLongPtrW(hWnd, GWLP_WNDPROC, (LONG_PTR)pfnOldProc);
+			RemovePropW(hWnd, g_pszOldParentWndProc);
+			RemovePropW(hWnd, g_pszThis);
+			break;
+		case WM_DISPLAYCHANGE:
+			DLog(L"ParentWndProc() - WM_DISPLAYCHANGE");
+			pThis->OnDisplayModeChange(true);
+			break;
+		case WM_MOVE:
+			if (pThis->m_bIsFullscreen) {
+				// I don't know why, but without this, the filter freezes when switching from fullscreen to window in DX9 mode.
+				SetWindowLongPtrW(hWnd, GWLP_WNDPROC, (LONG_PTR)pfnOldProc);
+				SetWindowLongPtrW(hWnd, GWLP_WNDPROC, (LONG_PTR)ParentWndProc);
+			} else {
+				pThis->OnWindowMove();
+			}
+			break;
+		case WM_NCACTIVATE:
+			if (!wParam && pThis->m_bIsFullscreen) {
+				return 0;
+			}
+			break;
+		case WM_RBUTTONUP:
+			if (pThis->m_bIsFullscreen) {
+				// block context menu in exclusive full screen
+				return 0;
+			}
+			break;
+	}
+
+	return CallWindowProcW(pfnOldProc, hWnd, Msg, wParam, lParam);
+}
 
 //
 // CMpcVideoRenderer
@@ -52,15 +109,9 @@ static const wchar_t g_szClassName[] = L"VRWindow";
 
 CMpcVideoRenderer::CMpcVideoRenderer(LPUNKNOWN pUnk, HRESULT* phr)
 	: CBaseVideoRenderer2(__uuidof(this), L"MPC Video Renderer", pUnk, phr)
-	, m_DX9_VP(this)
-	, m_DX11_VP(this)
 {
-#ifdef _DEBUG
-	DbgSetModuleLevel(LOG_TRACE, DWORD_MAX);
-	DbgSetModuleLevel(LOG_ERROR, DWORD_MAX);
-#endif
-
-	DLog(L"Windows %s", GetWindowsVersion());
+	DLog(L"CMpcVideoRenderer::CMpcVideoRenderer()");
+	DLog(L"Windows {}", GetWindowsVersion());
 	DLog(GetNameAndVersion());
 
 	ASSERT(S_OK == *phr);
@@ -77,6 +128,9 @@ CMpcVideoRenderer::CMpcVideoRenderer(LPUNKNOWN pUnk, HRESULT* phr)
 		}
 		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_ShowStatistics, dw)) {
 			m_Sets.bShowStats = !!dw;
+		}
+		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_ResizeStatistics, dw)) {
+			m_Sets.iResizeStats = discard((int)dw, 0, 0, 1);
 		}
 		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_TextureFormat, dw)) {
 			switch (dw) {
@@ -108,8 +162,8 @@ CMpcVideoRenderer::CMpcVideoRenderer(LPUNKNOWN pUnk, HRESULT* phr)
 		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_VPScaling, dw)) {
 			m_Sets.bVPScaling = !!dw;
 		}
-		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_ChromaScaling, dw)) {
-			m_Sets.iChromaScaling = discard((int)dw, (int)CHROMA_Bilinear, (int)CHROMA_Bilinear, (int)CHROMA_CatmullRom);
+		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_ChromaUpsampling, dw)) {
+			m_Sets.iChromaScaling = discard((int)dw, (int)CHROMA_Bilinear, (int)CHROMA_Nearest, (int)CHROMA_CatmullRom);
 		}
 		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_Upscaling, dw)) {
 			m_Sets.iUpscaling = discard((int)dw, (int)UPSCALE_CatmullRom, (int)UPSCALE_Nearest, (int)UPSCALE_Lanczos3);
@@ -126,110 +180,86 @@ CMpcVideoRenderer::CMpcVideoRenderer(LPUNKNOWN pUnk, HRESULT* phr)
 		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_SwapEffect, dw)) {
 			m_Sets.iSwapEffect = discard((int)dw, (int)SWAPEFFECT_Discard, (int)SWAPEFFECT_Discard, (int)SWAPEFFECT_Flip);
 		}
+		if (ERROR_SUCCESS == key.QueryDWORDValue(OPT_ExclusiveFullscreen, dw)) {
+			m_Sets.bExclusiveFS = !!dw;
+		}
 	}
 
-	// configure the video processors
-	m_DX9_VP.SetShowStats(m_Sets.bShowStats);
-	m_DX9_VP.SetTexFormat(m_Sets.iTextureFmt);
-	m_DX9_VP.SetVPEnableFmts(m_Sets.VPFmts);
-	m_DX9_VP.SetDeintDouble(m_Sets.bDeintDouble);
-	m_DX9_VP.SetVPScaling(m_Sets.bVPScaling);
-	m_DX9_VP.SetChromaScaling(m_Sets.iChromaScaling);
-	m_DX9_VP.SetUpscaling(m_Sets.iUpscaling);
-	m_DX9_VP.SetDownscaling(m_Sets.iDownscaling);
-	m_DX9_VP.SetInterpolateAt50pct(m_Sets.bInterpolateAt50pct);
-	m_DX9_VP.SetDither(m_Sets.bUseDither);
-	m_DX9_VP.SetSwapEffect(m_Sets.iSwapEffect);
+	HRESULT hr = S_FALSE;
 
-	m_DX11_VP.SetShowStats(m_Sets.bShowStats);
-	m_DX11_VP.SetTexFormat(m_Sets.iTextureFmt);
-	m_DX11_VP.SetVPEnableFmts(m_Sets.VPFmts);
-	m_DX11_VP.SetDeintDouble(m_Sets.bDeintDouble);
-	m_DX11_VP.SetVPScaling(m_Sets.bVPScaling);
-	m_DX11_VP.SetChromaScaling(m_Sets.iChromaScaling);
-	m_DX11_VP.SetUpscaling(m_Sets.iUpscaling);
-	m_DX11_VP.SetDownscaling(m_Sets.iDownscaling);
-	m_DX11_VP.SetInterpolateAt50pct(m_Sets.bInterpolateAt50pct);
-	m_DX11_VP.SetDither(m_Sets.bUseDither);
-	m_DX11_VP.SetSwapEffect(m_Sets.iSwapEffect);
+	if (m_Sets.bUseD3D11 && IsWindows7SP1OrGreater()) {
+		m_VideoProcessor = new CDX11VideoProcessor(this, hr);
+		if (SUCCEEDED(hr)) {
+			// configure the video processor
+			m_VideoProcessor->SetShowStats(m_Sets.bShowStats);
+			m_VideoProcessor->SetResizeStats(m_Sets.iResizeStats);
+			m_VideoProcessor->SetTexFormat(m_Sets.iTextureFmt);
+			m_VideoProcessor->SetVPEnableFmts(m_Sets.VPFmts);
+			m_VideoProcessor->SetDeintDouble(m_Sets.bDeintDouble);
+			m_VideoProcessor->SetVPScaling(m_Sets.bVPScaling);
+			m_VideoProcessor->SetChromaScaling(m_Sets.iChromaScaling);
+			m_VideoProcessor->SetUpscaling(m_Sets.iUpscaling);
+			m_VideoProcessor->SetDownscaling(m_Sets.iDownscaling);
+			m_VideoProcessor->SetInterpolateAt50pct(m_Sets.bInterpolateAt50pct);
+			m_VideoProcessor->SetDither(m_Sets.bUseDither);
+			m_VideoProcessor->SetSwapEffect(m_Sets.iSwapEffect);
 
-	// other
-	m_bUsedD3D11 = m_Sets.bUseD3D11 && IsWindows7SP1OrGreater();
-
-	// initialize the video processor
-	if (m_bUsedD3D11) {
-		*phr = m_DX11_VP.Init(m_hWnd);
-		if (*phr == S_OK) {
-			DLog(L"Direct3D11 initialization successfully!");
-			return;
+			hr = m_VideoProcessor->Init(m_hWnd);
 		}
 
-		m_bUsedD3D11 = false;
+		if (FAILED(hr)) {
+			SAFE_DELETE(m_VideoProcessor);
+		}
+		DLogIf(S_OK == hr, L"Direct3D11 initialization successfully!");
 	}
 
-	m_evDX9Init.Reset();
-	m_evDX9InitHwnd.Reset();
-	m_evDX9Resize.Reset();
-	m_evQuit.Reset();
-	m_evThreadFinishJob.Reset();
+	if (!m_VideoProcessor) {
+		m_VideoProcessor = new CDX9VideoProcessor(this, hr);
+		if (SUCCEEDED(hr)) {
+			// configure the video processor
+			m_VideoProcessor->SetShowStats(m_Sets.bShowStats);
+			m_VideoProcessor->SetResizeStats(m_Sets.iResizeStats);
+			m_VideoProcessor->SetTexFormat(m_Sets.iTextureFmt);
+			m_VideoProcessor->SetVPEnableFmts(m_Sets.VPFmts);
+			m_VideoProcessor->SetDeintDouble(m_Sets.bDeintDouble);
+			m_VideoProcessor->SetVPScaling(m_Sets.bVPScaling);
+			m_VideoProcessor->SetChromaScaling(m_Sets.iChromaScaling);
+			m_VideoProcessor->SetUpscaling(m_Sets.iUpscaling);
+			m_VideoProcessor->SetDownscaling(m_Sets.iDownscaling);
+			m_VideoProcessor->SetInterpolateAt50pct(m_Sets.bInterpolateAt50pct);
+			m_VideoProcessor->SetDither(m_Sets.bUseDither);
+			m_VideoProcessor->SetSwapEffect(m_Sets.iSwapEffect);
 
-	m_DX9Thread = std::thread([this] { DX9Thread(); });
+			hr = m_VideoProcessor->Init(::GetForegroundWindow());
+		}
 
-	m_evDX9Init.Set();
-	WaitForSingleObject(m_evThreadFinishJob, INFINITE);
-	*phr = m_hrThread;
-	DLogIf(S_OK == *phr, L"Direct3D9 initialization successfully!");
+		DLogIf(S_OK == hr, L"Direct3D9 initialization successfully!");
+	}
+
+	*phr = hr;
 
 	return;
 }
 
 CMpcVideoRenderer::~CMpcVideoRenderer()
 {
-	DLog(L"~CMpcVideoRenderer()");
+	DLog(L"CMpcVideoRenderer::~CMpcVideoRenderer()");
 
-	if (m_DX9Thread.joinable()) {
-		m_evQuit.Set();
-		m_DX9Thread.join();
-	}
-
-	if (m_hWnd) {
-		BOOL ret = DestroyWindow(m_hWnd);
-		DLogIf(!ret, L"DestroyWindow(m_hWnd) failed with error %s", HR2Str(HRESULT_FROM_WIN32(GetLastError())));
+	if (m_hWndWindow) {
+		::SendMessageW(m_hWndWindow, WM_CLOSE, 0, 0);
 	}
 
 	UnregisterClassW(g_szClassName, g_hInst);
-}
 
-void CMpcVideoRenderer::DX9Thread()
-{
-	HANDLE hEvts[] = { m_evDX9Init, m_evDX9InitHwnd, m_evDX9Resize, m_evQuit };
-
-	for (;;) {
-		const auto dwObject = WaitForMultipleObjects(std::size(hEvts), hEvts, FALSE, INFINITE);
-		m_hrThread = E_FAIL;
-		switch (dwObject) {
-			case WAIT_OBJECT_0:
-				m_hrThread = m_DX9_VP.Init(::GetForegroundWindow(), nullptr);
-				m_evThreadFinishJob.Set();
-				break;
-			case WAIT_OBJECT_0 + 1:
-				{
-					bool bChangeDevice = false;
-					m_hrThread = m_DX9_VP.Init(m_hWnd, &bChangeDevice);
-					if (bChangeDevice) {
-						OnDisplayChange();
-					}
-				}
-				m_evThreadFinishJob.Set();
-				break;
-			case WAIT_OBJECT_0 + 2:
-				m_hrThread = m_DX9_VP.SetWindowRect(m_windowRect);
-				m_evThreadFinishJob.Set();
-				break;
-			default:
-				return;
-		}
+	if (m_hWndParentMain) {
+		RemoveParentWndProc(m_hWndParentMain);
 	}
+
+	if (m_bIsFullscreen && m_hWndParentMain) {
+		PostMessageW(m_hWndParentMain, WM_SWITCH_FULLSCREEN, 0, 0);
+	}
+
+	SAFE_DELETE(m_VideoProcessor);
 }
 
 void CMpcVideoRenderer::NewSegment(REFERENCE_TIME startTime)
@@ -251,11 +281,9 @@ HRESULT CMpcVideoRenderer::EndFlush()
 {
 	DLog(L"CMpcVideoRenderer::EndFlush()");
 
-	if (m_bUsedD3D11) {
-		m_DX11_VP.Flush();
-	} else {
-		m_DX9_VP.Flush();
-	}
+	m_bValidBuffer = false;
+
+	m_VideoProcessor->Flush();
 
 	HRESULT hr = __super::EndFlush();
 
@@ -274,12 +302,8 @@ long CMpcVideoRenderer::CalcImageSize(CMediaType& mt, bool redefine_mt)
 
 	if (redefine_mt) {
 		CSize Size(pBIH->biWidth, pBIH->biHeight);
-		BOOL ret = FALSE;
-		if (m_bUsedD3D11) {
-			ret = m_DX11_VP.GetAlignmentSize(mt, Size);
-		} else {
-			ret = m_DX9_VP.GetAlignmentSize(mt, Size);
-		}
+
+		BOOL ret = m_VideoProcessor->GetAlignmentSize(mt, Size);
 
 		if (ret && (Size.cx != pBIH->biWidth || Size.cy != pBIH->biHeight)) {
 			BYTE* pbFormat = mt.ReallocFormatBuffer(112 + sizeof(VR_Extradata));
@@ -301,7 +325,7 @@ long CMpcVideoRenderer::CalcImageSize(CMediaType& mt, bool redefine_mt)
 				rcSource = { 0, 0, pBIH->biWidth, abs(pBIH->biHeight) };
 			}
 
-			DLog(L"CMpcVideoRenderer::CalcImageSize() buffer size changed from %dx%d to %dx%d", pBIH->biWidth, pBIH->biHeight, Size.cx, Size.cy);
+			DLog(L"CMpcVideoRenderer::CalcImageSize() buffer size changed from {}x{} to {}x{}", pBIH->biWidth, pBIH->biHeight, Size.cx, Size.cy);
 			// overwrite buffer size
 			pBIH->biWidth  = Size.cx;
 			pBIH->biHeight = Size.cy;
@@ -324,14 +348,8 @@ HRESULT CMpcVideoRenderer::CheckMediaType(const CMediaType* pmt)
 			if (pmt->subtype == *sudPinType.clsMinorType) {
 				CAutoLock cRendererLock(&m_RendererLock);
 
-				if (m_bUsedD3D11) {
-					if (!m_DX11_VP.VerifyMediaType(pmt)) {
-						return VFW_E_UNSUPPORTED_VIDEO;
-					}
-				} else {
-					if (!m_DX9_VP.VerifyMediaType(pmt)) {
-						return VFW_E_UNSUPPORTED_VIDEO;
-					}
+				if (!m_VideoProcessor->VerifyMediaType(pmt)) {
+					return VFW_E_UNSUPPORTED_VIDEO;
 				}
 
 				return S_OK;
@@ -344,7 +362,7 @@ HRESULT CMpcVideoRenderer::CheckMediaType(const CMediaType* pmt)
 
 HRESULT CMpcVideoRenderer::SetMediaType(const CMediaType *pmt)
 {
-	DLog(L"CMpcVideoRenderer::SetMediaType()\n%s", MediaType2Str(pmt));
+	DLog(L"CMpcVideoRenderer::SetMediaType()\n{}", MediaType2Str(pmt));
 
 	CheckPointer(pmt, E_POINTER);
 	CheckPointer(pmt->pbFormat, E_POINTER);
@@ -368,22 +386,12 @@ HRESULT CMpcVideoRenderer::SetMediaType(const CMediaType *pmt)
 		}
 	}
 
-	if (m_bUsedD3D11) {
-		if (!m_DX11_VP.InitMediaType(&mt)) {
-			return VFW_E_UNSUPPORTED_VIDEO;
-		}
-	} else {
-		if (!m_DX9_VP.InitMediaType(&mt)) {
-			return VFW_E_UNSUPPORTED_VIDEO;
-		}
+	if (!m_VideoProcessor->InitMediaType(&mt)) {
+		return VFW_E_UNSUPPORTED_VIDEO;
 	}
 
 	if (!m_videoRect.IsRectNull()) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetVideoRect(m_videoRect);
-		} else {
-			m_DX9_VP.SetVideoRect(m_videoRect);
-		}
+		m_VideoProcessor->SetVideoRect(m_videoRect);
 	}
 
 	return S_OK;
@@ -393,12 +401,10 @@ HRESULT CMpcVideoRenderer::DoRenderSample(IMediaSample* pSample)
 {
 	CheckPointer(pSample, E_POINTER);
 
-	HRESULT hr = S_OK;
+	HRESULT hr = m_VideoProcessor->ProcessSample(pSample);
 
-	if (m_bUsedD3D11) {
-		hr = m_DX11_VP.ProcessSample(pSample);
-	} else {
-		hr = m_DX9_VP.ProcessSample(pSample);
+	if (SUCCEEDED(hr)) {
+		m_bValidBuffer = true;
 	}
 
 	if (m_Stepping && !(--m_Stepping)) {
@@ -492,6 +498,46 @@ HRESULT CMpcVideoRenderer::Receive(IMediaSample* pSample)
 	return NOERROR;
 }
 
+void CMpcVideoRenderer::UpdateDiplayInfo()
+{
+	const HMONITOR hMonPrimary = MonitorFromPoint(CPoint(0, 0), MONITOR_DEFAULTTOPRIMARY);
+
+	MONITORINFOEXW mi = { sizeof(mi) };
+	GetMonitorInfoW(m_hMon, (MONITORINFO*)&mi);
+
+	bool ret = GetDisplayConfig(mi.szDevice, m_DisplayConfig);
+	if (m_hMon == hMonPrimary) {
+		m_bPrimaryDisplay = true;
+	} else {
+		m_bPrimaryDisplay = false;
+	}
+
+	m_VideoProcessor->SetDisplayInfo(m_DisplayConfig, m_bPrimaryDisplay, m_bIsFullscreen);
+}
+
+void CMpcVideoRenderer::OnDisplayModeChange(const bool bReset/* = false*/)
+{
+	if (bReset && m_VideoProcessor->Type() == VP_DX9) {
+		CAutoLock cRendererLock(&m_RendererLock);
+
+		m_VideoProcessor->Reset();
+	}
+
+	m_hMon = MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST);
+	UpdateDiplayInfo();
+}
+
+void CMpcVideoRenderer::OnWindowMove()
+{
+	if (GetActive()) {
+		const HMONITOR hMon = MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST);
+		if (hMon != m_hMon) {
+			m_hMon = hMon;
+			UpdateDiplayInfo();
+		}
+	}
+}
+
 STDMETHODIMP CMpcVideoRenderer::NonDelegatingQueryInterface(REFIID riid, void** ppv)
 {
 	CheckPointer(ppv, E_POINTER);
@@ -518,9 +564,10 @@ STDMETHODIMP CMpcVideoRenderer::Run(REFERENCE_TIME rtStart)
 		return NOERROR;
 	}
 
+	CAutoLock cVideoLock(&m_InterfaceLock);
 	m_filterState = State_Running;
 
-	if (m_bUsedD3D11) {
+	if (m_VideoProcessor->Type() == VP_DX11) {
 		if (!m_bCheckSubInvAlpha) {
 			// only one check for XySubFilter in the graph after playback starts
 			m_bCheckSubInvAlpha = true;
@@ -541,11 +588,8 @@ STDMETHODIMP CMpcVideoRenderer::Run(REFERENCE_TIME rtStart)
 				SAFE_RELEASE(pEnumFilters);
 			}
 		}
-
-		m_DX11_VP.Start();
-	} else {
-		m_DX9_VP.Start();
 	}
+	m_VideoProcessor->Start();
 
 	return CBaseVideoRenderer2::Run(rtStart);
 }
@@ -571,8 +615,10 @@ STDMETHODIMP CMpcVideoRenderer::Stop()
 // IKsPropertySet
 STDMETHODIMP CMpcVideoRenderer::Set(REFGUID PropSet, ULONG Id, LPVOID pInstanceData, ULONG InstanceLength, LPVOID pPropertyData, ULONG DataLength)
 {
+	DLog(L"IKsPropertySet::Set({}, {}, ...)", GUIDtoWString(PropSet), Id);
+
 	if (PropSet == AM_KSPROPSETID_CopyProt) {
-		if (Id == AM_PROPERTY_COPY_MACROVISION) {
+		if (Id == AM_PROPERTY_COPY_MACROVISION || Id == AM_PROPERTY_COPY_DIGITAL_CP) {
 			DLog(L"Oops, no-no-no, no macrovision please");
 			return S_OK;
 		}
@@ -595,13 +641,26 @@ STDMETHODIMP CMpcVideoRenderer::Set(REFGUID PropSet, ULONG Id, LPVOID pInstanceD
 
 STDMETHODIMP CMpcVideoRenderer::Get(REFGUID PropSet, ULONG Id, LPVOID pInstanceData, ULONG InstanceLength, LPVOID pPropertyData, ULONG DataLength, ULONG* pBytesReturned)
 {
-	return E_PROP_SET_UNSUPPORTED;
+	DLog(L"IKsPropertySet::Get({}, {}, ...)", GUIDtoWString(PropSet), Id);
+
+	if (PropSet == AM_KSPROPSETID_CopyProt) {
+		if (Id == AM_PROPERTY_COPY_ANALOG_COMPONENT) {
+			return S_FALSE;
+		}
+	}
+	else {
+		return E_PROP_SET_UNSUPPORTED;
+	}
+
+	return E_PROP_ID_UNSUPPORTED;
 }
 
 STDMETHODIMP CMpcVideoRenderer::QuerySupported(REFGUID PropSet, ULONG Id, ULONG* pTypeSupport)
 {
+	DLog(L"IKsPropertySet::QuerySupported({}, {}, ...)", GUIDtoWString(PropSet), Id);
+
 	if (PropSet == AM_KSPROPSETID_CopyProt) {
-		if (Id == AM_PROPERTY_COPY_MACROVISION) {
+		if (Id == AM_PROPERTY_COPY_MACROVISION || Id == AM_PROPERTY_COPY_DIGITAL_CP) {
 			*pTypeSupport = KSPROPERTY_SUPPORT_SET;
 			return S_OK;
 		}
@@ -622,28 +681,12 @@ STDMETHODIMP CMpcVideoRenderer::GetService(REFGUID guidService, REFIID riid, LPV
 {
 	if (guidService == MR_VIDEO_ACCELERATION_SERVICE) {
 		if (riid == __uuidof(IDirect3DDeviceManager9)) {
-			if (m_bUsedD3D11) {
-				return m_DX11_VP.GetDeviceManager9()->QueryInterface(riid, ppvObject);
-			} else {
-				return m_DX9_VP.GetDeviceManager9()->QueryInterface(riid, ppvObject);
-			}
+			return m_VideoProcessor->GetDeviceManager9()->QueryInterface(riid, ppvObject);
 		}
-		/*
-		} else if (riid == __uuidof(IDirectXVideoDecoderService) || riid == __uuidof(IDirectXVideoProcessorService) ) {
-		return m_pD3DDeviceManager->GetVideoService(m_hDevice, riid, ppvObject);
-		} else if (riid == __uuidof(IDirectXVideoAccelerationService)) {
-		// TODO : to be tested....
-		return pDXVA2CreateVideoService(m_pD3DDevEx, riid, ppvObject);
-		}
-		*/
 	}
 	if (guidService == MR_VIDEO_MIXER_SERVICE) {
-		if (riid == IID_IMFVideoProcessor) {
-			if (m_bUsedD3D11) {
-				return m_DX11_VP.QueryInterface(riid, ppvObject);
-			} else {
-				return m_DX9_VP.QueryInterface(riid, ppvObject);
-			}
+		if (riid == IID_IMFVideoProcessor || riid == IID_IMFVideoMixerBitmap) {
+			return m_VideoProcessor->QueryInterface(riid, ppvObject);
 		}
 	}
 
@@ -661,11 +704,8 @@ STDMETHODIMP CMpcVideoRenderer::GetSourcePosition(long *pLeft, long *pTop, long 
 	CRect rect;
 	{
 		CAutoLock cVideoLock(&m_InterfaceLock);
-		if (m_bUsedD3D11) {
-			m_DX11_VP.GetSourceRect(rect);
-		} else {
-			m_DX9_VP.GetSourceRect(rect);
-		}
+
+		m_VideoProcessor->GetSourceRect(rect);
 	}
 
 	*pLeft = rect.left;
@@ -689,11 +729,8 @@ STDMETHODIMP CMpcVideoRenderer::SetDestinationPosition(long Left, long Top, long
 		m_videoRect = videoRect;
 
 		CAutoLock cRendererLock(&m_RendererLock);
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetVideoRect(videoRect);
-		} else {
-			m_DX9_VP.SetVideoRect(videoRect);
-		}
+
+		m_VideoProcessor->SetVideoRect(videoRect);
 	}
 
 	if (m_bForceRedrawing) {
@@ -713,11 +750,8 @@ STDMETHODIMP CMpcVideoRenderer::GetDestinationPosition(long *pLeft, long *pTop, 
 	CRect rect;
 	{
 		CAutoLock cVideoLock(&m_InterfaceLock);
-		if (m_bUsedD3D11) {
-			m_DX11_VP.GetVideoRect(rect);
-		} else {
-			m_DX9_VP.GetVideoRect(rect);
-		}
+
+		m_VideoProcessor->GetVideoRect(rect);
 	}
 
 	*pLeft = rect.left;
@@ -731,11 +765,7 @@ STDMETHODIMP CMpcVideoRenderer::GetDestinationPosition(long *pLeft, long *pTop, 
 STDMETHODIMP CMpcVideoRenderer::GetVideoSize(long *pWidth, long *pHeight)
 {
 	// retrieves the native video's width and height.
-	if (m_bUsedD3D11) {
-		return m_DX11_VP.GetVideoSize(pWidth, pHeight);
-	} else {
-		return m_DX9_VP.GetVideoSize(pWidth, pHeight);
-	}
+	return m_VideoProcessor->GetVideoSize(pWidth, pHeight);
 }
 
 STDMETHODIMP CMpcVideoRenderer::GetCurrentImage(long *pBufferSize, long *pDIBImage)
@@ -746,15 +776,24 @@ STDMETHODIMP CMpcVideoRenderer::GetCurrentImage(long *pBufferSize, long *pDIBIma
 	CAutoLock cRendererLock(&m_RendererLock);
 	HRESULT hr;
 
-	CRect rect;
-	if (m_bUsedD3D11) {
-		m_DX11_VP.GetSourceRect(rect);
-	} else {
-		m_DX9_VP.GetSourceRect(rect);
+	CSize framesize;
+	long aspectX, aspectY;
+	int iRotation;
+
+	m_VideoProcessor->GetVideoSize(&framesize.cx, &framesize.cy);
+	m_VideoProcessor->GetAspectRatio(&aspectX, &aspectY);
+	iRotation = m_VideoProcessor->GetRotation();
+
+	if (aspectX > 0 && aspectY > 0) {
+		if (iRotation == 90 || iRotation == 270) {
+			framesize.cy = MulDiv(framesize.cx, aspectY, aspectX);
+		} else {
+			framesize.cx = MulDiv(framesize.cy, aspectX, aspectY);
+		}
 	}
 
-	const int w = rect.Width();
-	const int h = rect.Height();
+	const auto w = framesize.cx;
+	const auto h = framesize.cy;
 
 	// VFW_E_NOT_PAUSED ?
 
@@ -772,11 +811,7 @@ STDMETHODIMP CMpcVideoRenderer::GetCurrentImage(long *pBufferSize, long *pDIBIma
 		return E_OUTOFMEMORY;
 	}
 
-	if (m_bUsedD3D11) {
-		hr = m_DX11_VP.GetCurentImage(pDIBImage);
-	} else {
-		hr = m_DX9_VP.GetCurentImage(pDIBImage);
-	}
+	hr = m_VideoProcessor->GetCurentImage(pDIBImage);
 
 	return hr;
 }
@@ -784,35 +819,83 @@ STDMETHODIMP CMpcVideoRenderer::GetCurrentImage(long *pBufferSize, long *pDIBIma
 // IBasicVideo2
 STDMETHODIMP CMpcVideoRenderer::GetPreferredAspectRatio(long *plAspectX, long *plAspectY)
 {
-	if (m_bUsedD3D11) {
-		return m_DX11_VP.GetAspectRatio(plAspectX, plAspectY);
-	} else {
-		return m_DX9_VP.GetAspectRatio(plAspectX, plAspectY);
+	return m_VideoProcessor->GetAspectRatio(plAspectX, plAspectY);
+}
+
+void CMpcVideoRenderer::SwitchFullScreen()
+{
+	DLog(L"CMpcVideoRenderer::SwitchFullScreen() : Switch to fullscreen");
+	m_bIsFullscreen = true;
+
+	if (m_hWnd) {
+		Init(m_VideoProcessor->Type() == VP_DX9 ? false : true);
+		Redraw();
+
+		if (m_hWndParentMain) {
+			PostMessageW(m_hWndParentMain, WM_SWITCH_FULLSCREEN, 1, 0);
+		}
 	}
 }
 
-// IVideoWindow
-STDMETHODIMP CMpcVideoRenderer::put_Owner(OAHWND Owner)
+static LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-	if (m_hWndParent != (HWND)Owner) {
-		m_hWndParent = (HWND)Owner;
+	CMpcVideoRenderer* pThis = reinterpret_cast <CMpcVideoRenderer*>(GetWindowLongPtrW(hwnd, 0));
+	if (!pThis) {
+		if ((uMsg != WM_NCCREATE)
+				|| (nullptr == (pThis = (CMpcVideoRenderer*)((LPCREATESTRUCTW)lParam)->lpCreateParams))) {
+			return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+		}
 
-		if (m_hWnd) {
-			DestroyWindow(m_hWnd);
-			m_hWnd = nullptr;
+		SetWindowLongPtrW(hwnd, 0, (LONG_PTR)pThis);
+	}
+
+	return pThis->OnReceiveMessage(hwnd, uMsg, wParam, lParam);
+}
+
+HRESULT CMpcVideoRenderer::Init(const bool bCreateWindow/* = false*/)
+{
+	CAutoLock cRendererLock(&m_RendererLock);
+
+	HRESULT hr = S_OK;
+
+	auto hwnd = m_hWndParent;
+	while ((GetParent(hwnd)) && (GetParent(hwnd) == GetAncestor(hwnd, GA_PARENT))) {
+		hwnd = GetParent(hwnd);
+	}
+
+	if (hwnd != m_hWndParentMain) {
+		if (m_hWndParentMain) {
+			RemoveParentWndProc(m_hWndParentMain);
+		}
+
+		m_hWndParentMain = hwnd;
+		auto pfnOldProc = (WNDPROC)GetWindowLongPtrW(m_hWndParentMain, GWLP_WNDPROC);
+		SetWindowLongPtrW(m_hWndParentMain, GWLP_WNDPROC, (LONG_PTR)ParentWndProc);
+		SetPropW(m_hWndParentMain, g_pszOldParentWndProc, (HANDLE)pfnOldProc);
+		SetPropW(m_hWndParentMain, g_pszThis, (HANDLE)this);
+	}
+
+	if (bCreateWindow) {
+		if (m_hWndWindow) {
+			::SendMessageW(m_hWndWindow, WM_CLOSE, 0, 0);
+			m_hWndWindow = nullptr;
 		}
 
 		WNDCLASSEXW wc = { sizeof(wc) };
 		if (!GetClassInfoExW(g_hInst, g_szClassName, &wc)) {
-			wc.lpfnWndProc = ::DefWindowProcW;
+			wc.style = CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW;
+			wc.lpfnWndProc = WndProc;
 			wc.hInstance = g_hInst;
 			wc.lpszClassName = g_szClassName;
+			wc.cbWndExtra = sizeof(this);
 			if (!RegisterClassExW(&wc)) {
-				return E_FAIL;
+				hr = HRESULT_FROM_WIN32(GetLastError());
+				DLog(L"CMpcVideoRenderer::Init() : RegisterClassExW() failed with error {}", HR2Str(hr));
+				return hr;
 			}
 		}
 
-		m_hWnd = CreateWindowExW(
+		m_hWndWindow = CreateWindowExW(
 			0,
 			g_szClassName,
 			nullptr,
@@ -821,27 +904,38 @@ STDMETHODIMP CMpcVideoRenderer::put_Owner(OAHWND Owner)
 			m_hWndParent,
 			nullptr,
 			g_hInst,
-			nullptr
+			this
 		);
 
-		if (!m_hWnd) {
+		if (!m_hWndWindow) {
+			hr = HRESULT_FROM_WIN32(GetLastError());
+			DLog(L"CMpcVideoRenderer::Init() : CreateWindowExW() failed with error {}", HR2Str(hr));
 			return E_FAIL;
 		}
 
 		if (!m_windowRect.IsRectNull()) {
-			SetWindowPos(m_hWnd, nullptr, m_windowRect.left, m_windowRect.top, m_windowRect.Width(), m_windowRect.Height(), SWP_NOZORDER | SWP_NOACTIVATE);
+			SetWindowPos(m_hWndWindow, nullptr, m_windowRect.left, m_windowRect.top, m_windowRect.Width(), m_windowRect.Height(), SWP_NOZORDER | SWP_NOACTIVATE);
 		}
+	}
 
-		HRESULT hr;
-		if (m_bUsedD3D11) {
-			hr = m_DX11_VP.Init(m_hWnd);
-		} else {
-			m_evDX9InitHwnd.Set();
-			WaitForSingleObject(m_evThreadFinishJob, INFINITE);
-			hr = m_hrThread;
-		}
+	m_hWnd = m_bIsFullscreen && m_VideoProcessor->Type() == VP_DX9 ? m_hWndParentMain : m_hWndWindow;
+	bool bChangeDevice = false;
 
-		return hr;
+	hr = m_VideoProcessor->Init(m_hWnd, &bChangeDevice);
+
+	if (bChangeDevice) {
+		DoAfterChangingDevice();
+	}
+
+	return hr;
+}
+
+// IVideoWindow
+STDMETHODIMP CMpcVideoRenderer::put_Owner(OAHWND Owner)
+{
+	if (m_hWndParent != (HWND)Owner) {
+		m_hWndParent = (HWND)Owner;
+		return Init(true);
 	}
 	return S_OK;
 }
@@ -850,6 +944,25 @@ STDMETHODIMP CMpcVideoRenderer::get_Owner(OAHWND *Owner)
 {
 	CheckPointer(Owner, E_POINTER);
 	*Owner = (OAHWND)m_hWndParent;
+	return S_OK;
+}
+
+STDMETHODIMP CMpcVideoRenderer::put_MessageDrain(OAHWND Drain)
+{
+	if (m_pInputPin == nullptr || m_pInputPin->IsConnected() == FALSE) {
+		return VFW_E_NOT_CONNECTED;
+	}
+	m_hWndDrain = (HWND)Drain;
+	return S_OK;
+}
+
+STDMETHODIMP CMpcVideoRenderer::get_MessageDrain(OAHWND* Drain)
+{
+	CheckPointer(Drain, E_POINTER);
+	if (m_pInputPin == nullptr || m_pInputPin->IsConnected() == FALSE) {
+		return VFW_E_NOT_CONNECTED;
+	}
+	*Drain = (OAHWND)m_hWndDrain;
 	return S_OK;
 }
 
@@ -863,8 +976,32 @@ STDMETHODIMP CMpcVideoRenderer::SetWindowPosition(long Left, long Top, long Widt
 	m_windowRect = windowRect;
 
 	CAutoLock cRendererLock(&m_RendererLock);
-	if (m_hWnd) {
-		SetWindowPos(m_hWnd, nullptr, Left, Top, Width, Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+
+	if (m_Sets.bExclusiveFS || m_bIsFullscreen) {
+		const HMONITOR hMon = MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST);
+		MONITORINFO mi = { mi.cbSize = sizeof(mi) };
+		::GetMonitorInfoW(hMon, &mi);
+		const CRect rcMonitor(mi.rcMonitor);
+
+		if (!m_bIsFullscreen && m_windowRect.Width() == rcMonitor.Width() && m_windowRect.Height() == rcMonitor.Height()) {
+			SwitchFullScreen();
+		} else if (m_bIsFullscreen && (m_windowRect.Width() != rcMonitor.Width() || m_windowRect.Height() != rcMonitor.Height())) {
+			DLog(L"CMpcVideoRenderer::SetWindowPosition() : Switch from fullscreen");
+			m_bIsFullscreen = false;
+
+			if (m_hWnd) {
+				Init(m_VideoProcessor->Type() == VP_DX9 ? false : true);
+				Redraw();
+
+				if (m_hWndParentMain) {
+					PostMessageW(m_hWndParentMain, WM_SWITCH_FULLSCREEN, 0, 0);
+				}
+			}
+		}
+	}
+
+	if (m_hWndWindow && !m_bIsFullscreen) {
+		SetWindowPos(m_hWndWindow, nullptr, Left, Top, Width, Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
 		if (Left < 0) {
 			m_windowRect.OffsetRect(-Left, 0);
 		}
@@ -873,12 +1010,7 @@ STDMETHODIMP CMpcVideoRenderer::SetWindowPosition(long Left, long Top, long Widt
 		}
 	}
 
-	if (m_bUsedD3D11) {
-		m_DX11_VP.SetWindowRect(m_windowRect);
-	} else {
-		m_evDX9Resize.Set();
-		WaitForSingleObject(m_evThreadFinishJob, INFINITE);
-	}
+	m_VideoProcessor->SetWindowRect(m_windowRect);
 
 	m_windowRect = windowRect;
 
@@ -911,13 +1043,9 @@ STDMETHODIMP CMpcVideoRenderer::GetPages(CAUUID* pPages)
 
 // IVideoRenderer
 
-STDMETHODIMP CMpcVideoRenderer::GetVideoProcessorInfo(CStringW& str)
+STDMETHODIMP CMpcVideoRenderer::GetVideoProcessorInfo(std::wstring& str)
 {
-	if (m_bUsedD3D11) {
-		return m_DX11_VP.GetVPInfo(str);
-	} else {
-		return m_DX9_VP.GetVPInfo(str);
-	}
+	return m_VideoProcessor->GetVPInfo(str);
 }
 
 STDMETHODIMP_(bool) CMpcVideoRenderer::GetActive()
@@ -932,80 +1060,53 @@ STDMETHODIMP_(void) CMpcVideoRenderer::GetSettings(Settings_t& setings)
 
 STDMETHODIMP_(void) CMpcVideoRenderer::SetSettings(const Settings_t setings)
 {
-	m_Sets.bUseD3D11   = setings.bUseD3D11;
-	m_Sets.iSwapEffect = setings.iSwapEffect;
+	m_Sets.bUseD3D11    = setings.bUseD3D11;
+	m_Sets.bExclusiveFS = setings.bExclusiveFS;
 
 	CAutoLock cRendererLock(&m_RendererLock);
 
 	if (setings.bShowStats != m_Sets.bShowStats) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetShowStats(setings.bShowStats);
-		} else {
-			m_DX9_VP.SetShowStats(setings.bShowStats);
-		}
+		m_VideoProcessor->SetShowStats(setings.bShowStats);
 		m_Sets.bShowStats = setings.bShowStats;
 	}
 
+	if (setings.iResizeStats != m_Sets.iResizeStats) {
+		m_VideoProcessor->SetResizeStats(setings.iResizeStats);
+		m_Sets.iResizeStats = setings.iResizeStats;
+	}
+
 	if (setings.bDeintDouble != m_Sets.bDeintDouble) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetDeintDouble(setings.bDeintDouble);
-		} else {
-			m_DX9_VP.SetDeintDouble(setings.bDeintDouble);
-		}
+		m_VideoProcessor->SetDeintDouble(setings.bDeintDouble);
 		m_Sets.bDeintDouble = setings.bDeintDouble;
 	}
 
 	if (setings.bVPScaling != m_Sets.bVPScaling) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetVPScaling(setings.bVPScaling);
-		} else {
-			m_DX9_VP.SetVPScaling(setings.bVPScaling);
-		}
+		m_VideoProcessor->SetVPScaling(setings.bVPScaling);
 		m_Sets.bVPScaling = setings.bVPScaling;
 	}
 
 	if (setings.iChromaScaling != m_Sets.iChromaScaling) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetChromaScaling(setings.iChromaScaling);
-		} else {
-			m_DX9_VP.SetChromaScaling(setings.iChromaScaling);
-		}
+		m_VideoProcessor->SetChromaScaling(setings.iChromaScaling);
 		m_Sets.iChromaScaling = setings.iChromaScaling;
 	}
 
 	if (setings.iUpscaling != m_Sets.iUpscaling) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetUpscaling(setings.iUpscaling);
-		} else {
-			m_DX9_VP.SetUpscaling(setings.iUpscaling);
-		}
+		m_VideoProcessor->SetUpscaling(setings.iUpscaling);
 		m_Sets.iUpscaling = setings.iUpscaling;
 	}
 
 	if (setings.iDownscaling != m_Sets.iDownscaling) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetDownscaling(setings.iDownscaling);
-		} else {
-			m_DX9_VP.SetDownscaling(setings.iDownscaling);
-		}
+		m_VideoProcessor->SetDownscaling(setings.iDownscaling);
 		m_Sets.iDownscaling = setings.iDownscaling;
 	}
 
 	if (setings.bInterpolateAt50pct != m_Sets.bInterpolateAt50pct) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetInterpolateAt50pct(setings.bInterpolateAt50pct);
-		} else {
-			m_DX9_VP.SetInterpolateAt50pct(setings.bInterpolateAt50pct);
-		}
+		m_VideoProcessor->SetInterpolateAt50pct(setings.bInterpolateAt50pct);
 		m_Sets.bInterpolateAt50pct = setings.bInterpolateAt50pct;
 	}
 
 	if (setings.bUseDither != m_Sets.bUseDither) {
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetDither(setings.bUseDither);
-		} else {
-			m_DX9_VP.SetDither(setings.bUseDither);
-		}
+		m_VideoProcessor->SetDither(setings.bUseDither);
 		m_Sets.bUseDither = setings.bUseDither;
 	}
 
@@ -1019,17 +1120,33 @@ STDMETHODIMP_(void) CMpcVideoRenderer::SetSettings(const Settings_t setings)
 		m_Sets.VPFmts      = setings.VPFmts;
 
 		if (m_inputMT.IsValid()) {
-			BOOL ret;
-			if (m_bUsedD3D11) {
-				m_DX11_VP.SetTexFormat(m_Sets.iTextureFmt);
-				m_DX11_VP.SetVPEnableFmts(m_Sets.VPFmts);
-				ret = m_DX11_VP.InitMediaType(&m_inputMT);
-			} else {
-				m_DX9_VP.SetTexFormat(m_Sets.iTextureFmt);
-				m_DX9_VP.SetVPEnableFmts(m_Sets.VPFmts);
-				ret = m_DX9_VP.InitMediaType(&m_inputMT);
+			m_VideoProcessor->SetTexFormat(m_Sets.iTextureFmt);
+			m_VideoProcessor->SetVPEnableFmts(m_Sets.VPFmts);
+			BOOL ret = m_VideoProcessor->InitMediaType(&m_inputMT);
+
+			m_bValidBuffer = false;
+		}
+	}
+
+	if (m_Sets.iSwapEffect != setings.iSwapEffect) {
+		m_Sets.iSwapEffect = setings.iSwapEffect;
+		if (m_hWnd) {
+			m_VideoProcessor->SetSwapEffect(m_Sets.iSwapEffect);
+
+			if (!m_bIsFullscreen) {
+				Init(true);
 			}
 		}
+	}
+
+	if (m_State == State_Paused) {
+		if (!m_bValidBuffer && m_pMediaSample) {
+			m_bInReceive = FALSE;
+
+			CAutoLock cSampleLock(&m_RendererLock);
+			DoRenderSample(m_pMediaSample);
+		}
+		Redraw();
 	}
 }
 
@@ -1037,21 +1154,23 @@ STDMETHODIMP CMpcVideoRenderer::SaveSettings()
 {
 	CRegKey key;
 	if (ERROR_SUCCESS == key.Create(HKEY_CURRENT_USER, OPT_REGKEY_VIDEORENDERER)) {
-		key.SetDWORDValue(OPT_UseD3D11,           m_Sets.bUseD3D11);
-		key.SetDWORDValue(OPT_ShowStatistics,     m_Sets.bShowStats);
-		key.SetDWORDValue(OPT_TextureFormat,      m_Sets.iTextureFmt);
-		key.SetDWORDValue(OPT_VPEnableNV12,       m_Sets.VPFmts.bNV12);
-		key.SetDWORDValue(OPT_VPEnableP01x,       m_Sets.VPFmts.bP01x);
-		key.SetDWORDValue(OPT_VPEnableYUY2,       m_Sets.VPFmts.bYUY2);
-		key.SetDWORDValue(OPT_VPEnableOther,      m_Sets.VPFmts.bOther);
-		key.SetDWORDValue(OPT_DoubleFrateDeint,   m_Sets.bDeintDouble);
-		key.SetDWORDValue(OPT_VPScaling,          m_Sets.bVPScaling);
-		key.SetDWORDValue(OPT_ChromaScaling,      m_Sets.iChromaScaling);
-		key.SetDWORDValue(OPT_Upscaling,          m_Sets.iUpscaling);
-		key.SetDWORDValue(OPT_Downscaling,        m_Sets.iDownscaling);
-		key.SetDWORDValue(OPT_InterpolateAt50pct, m_Sets.bInterpolateAt50pct);
-		key.SetDWORDValue(OPT_Dither,             m_Sets.bUseDither);
-		key.SetDWORDValue(OPT_SwapEffect,         m_Sets.iSwapEffect);
+		key.SetDWORDValue(OPT_UseD3D11,            m_Sets.bUseD3D11);
+		key.SetDWORDValue(OPT_ShowStatistics,      m_Sets.bShowStats);
+		key.SetDWORDValue(OPT_ResizeStatistics,    m_Sets.iResizeStats);
+		key.SetDWORDValue(OPT_TextureFormat,       m_Sets.iTextureFmt);
+		key.SetDWORDValue(OPT_VPEnableNV12,        m_Sets.VPFmts.bNV12);
+		key.SetDWORDValue(OPT_VPEnableP01x,        m_Sets.VPFmts.bP01x);
+		key.SetDWORDValue(OPT_VPEnableYUY2,        m_Sets.VPFmts.bYUY2);
+		key.SetDWORDValue(OPT_VPEnableOther,       m_Sets.VPFmts.bOther);
+		key.SetDWORDValue(OPT_DoubleFrateDeint,    m_Sets.bDeintDouble);
+		key.SetDWORDValue(OPT_VPScaling,           m_Sets.bVPScaling);
+		key.SetDWORDValue(OPT_ChromaUpsampling,    m_Sets.iChromaScaling);
+		key.SetDWORDValue(OPT_Upscaling,           m_Sets.iUpscaling);
+		key.SetDWORDValue(OPT_Downscaling,         m_Sets.iDownscaling);
+		key.SetDWORDValue(OPT_InterpolateAt50pct,  m_Sets.bInterpolateAt50pct);
+		key.SetDWORDValue(OPT_Dither,              m_Sets.bUseDither);
+		key.SetDWORDValue(OPT_SwapEffect,          m_Sets.iSwapEffect);
+		key.SetDWORDValue(OPT_ExclusiveFullscreen, m_Sets.bExclusiveFS);
 	}
 
 	return S_OK;
@@ -1076,6 +1195,11 @@ STDMETHODIMP CMpcVideoRenderer::GetBool(LPCSTR field, bool* value)
 		return S_OK;
 	}
 
+	if (!strcmp(field, "flip")) {
+		*value = m_VideoProcessor->GetFlip();
+		return S_OK;
+	}
+
 	return E_INVALIDARG;
 }
 
@@ -1085,11 +1209,7 @@ STDMETHODIMP CMpcVideoRenderer::GetInt(LPCSTR field, int* value)
 
 	if (!strcmp(field, "renderType")) {
 		if (m_inputMT.IsValid()) {
-			if (m_bUsedD3D11) {
-				*value = 11; // Direct3D 11
-			} else {
-				*value = 9; // Direct3D 9
-			}
+			*value = m_VideoProcessor->Type();
 		} else {
 			*value = 0; // not initialized
 		}
@@ -1100,11 +1220,7 @@ STDMETHODIMP CMpcVideoRenderer::GetInt(LPCSTR field, int* value)
 		return S_OK;
 	}
 	if (!strcmp(field, "rotation")) {
-		if (m_bUsedD3D11) {
-			*value = m_DX11_VP.GetRotation();
-		} else {
-			*value = m_DX9_VP.GetRotation();
-		}
+		*value = m_VideoProcessor->GetRotation();
 		return S_OK;
 	}
 
@@ -1131,13 +1247,8 @@ STDMETHODIMP CMpcVideoRenderer::GetBin(LPCSTR field, LPVOID* value, unsigned* si
 	if (!strcmp(field, "displayedImage")) {
 		CAutoLock cRendererLock(&m_RendererLock);
 
-		HRESULT hr;
-		if (m_bUsedD3D11) {
-			hr = m_DX11_VP.GetDisplayedImage((BYTE**)value, size);
-		} else {
-			hr = m_DX9_VP.GetDisplayedImage((BYTE**)value, size);
-		}
-		
+		HRESULT hr = m_VideoProcessor->GetDisplayedImage((BYTE**)value, size);
+
 		return hr;
 	}
 
@@ -1146,13 +1257,21 @@ STDMETHODIMP CMpcVideoRenderer::GetBin(LPCSTR field, LPVOID* value, unsigned* si
 
 STDMETHODIMP CMpcVideoRenderer::SetBool(LPCSTR field, bool value)
 {
+	if (!strcmp(field, "cmd_redraw") && value) {
+		Redraw();
+		return S_OK;
+	}
+
+	if (!strcmp(field, "cmd_clearPostScaleShaders") && value) {
+		CAutoLock cRendererLock(&m_RendererLock);
+
+		m_VideoProcessor->ClearPostScaleShaders();
+		return S_OK;
+	}
+
 	if (!strcmp(field, "statsEnable")) {
 		m_Sets.bShowStats = value;
-		if (m_bUsedD3D11) {
-			m_DX11_VP.SetShowStats(m_Sets.bShowStats);
-		} else {
-			m_DX9_VP.SetShowStats(m_Sets.bShowStats);
-		}
+		m_VideoProcessor->SetShowStats(m_Sets.bShowStats);
 
 		SaveSettings();
 		if (m_filterState == State_Paused) {
@@ -1166,18 +1285,10 @@ STDMETHODIMP CMpcVideoRenderer::SetBool(LPCSTR field, bool value)
 		return S_OK;
 	}
 
-	if (!strcmp(field, "cmd_redraw") && value) {
-		Redraw();
-		return S_OK;
-	}
-
-	if (!strcmp(field, "cmd_clearPostScaleShaders") && value) {
+	if (!strcmp(field, "flip")) {
 		CAutoLock cRendererLock(&m_RendererLock);
-		if (m_bUsedD3D11) {
-			m_DX11_VP.ClearPostScaleShaders();
-		} else {
-			m_DX9_VP.ClearPostScaleShaders();
-		}
+
+		m_VideoProcessor->SetFlip(value);
 		return S_OK;
 	}
 
@@ -1196,12 +1307,8 @@ STDMETHODIMP CMpcVideoRenderer::SetInt(LPCSTR field, int value)
 			}
 
 			CAutoLock cRendererLock(&m_RendererLock);
-			if (m_bUsedD3D11) {
-				m_DX11_VP.SetRotation(value);
-			} else {
-				m_DX9_VP.SetRotation(value);
-			}
 
+			m_VideoProcessor->SetRotation(value);
 			return S_OK;
 		}
 	}
@@ -1217,8 +1324,8 @@ STDMETHODIMP CMpcVideoRenderer::SetBin(LPCSTR field, LPVOID value, int size)
 			const BYTE* end = p + size;
 			uint32_t chunkcode;
 			int32_t chunksize;
-			CStringW shaderName;
-			CStringA shaderCode;
+			std::wstring shaderName;
+			std::string shaderCode;
 
 			while (p + 8 < end) {
 				memcpy(&chunkcode, p, 4);
@@ -1231,22 +1338,19 @@ STDMETHODIMP CMpcVideoRenderer::SetBin(LPCSTR field, LPVOID value, int size)
 
 				switch (chunkcode) {
 				case FCC('NAME'):
-					shaderName.SetString((LPCWSTR)p, chunksize / sizeof(wchar_t));
+					shaderName.assign((LPCWSTR)p, chunksize / sizeof(wchar_t));
 					break;
 				case FCC('CODE'):
-					shaderCode.SetString((LPCSTR)p, chunksize);
+					shaderCode.assign((LPCSTR)p, chunksize);
 					break;
 				}
 				p += chunksize;
 			}
 
-			if (shaderCode.GetLength()) {
+			if (shaderCode.size()) {
 				CAutoLock cRendererLock(&m_RendererLock);
-				if (m_bUsedD3D11) {
-					return m_DX11_VP.AddPostScaleShader(shaderName, shaderCode);
-				} else {
-					return m_DX9_VP.AddPostScaleShader(shaderName, shaderCode);
-				}
+
+				return m_VideoProcessor->AddPostScaleShader(shaderName, shaderCode);
 			}
 		}
 	}
@@ -1257,22 +1361,74 @@ STDMETHODIMP CMpcVideoRenderer::SetBin(LPCSTR field, LPVOID value, int size)
 HRESULT CMpcVideoRenderer::Redraw()
 {
 	CAutoLock cRendererLock(&m_RendererLock);
-	const auto bFrameDrawn = m_DrawStats.GetFrames() > 0;
+	const auto bDrawFrame = m_bValidBuffer && m_filterState != State_Stopped;
 
 	HRESULT hr = S_OK;
-	if (m_bUsedD3D11) {
-		if (bFrameDrawn && m_filterState != State_Stopped) {
-			hr = m_DX11_VP.Render(0);
-		} else {
-			hr = m_DX11_VP.FillBlack();
-		}
+	if (bDrawFrame) {
+		hr = m_VideoProcessor->Render(0);
 	} else {
-		if (bFrameDrawn && m_filterState != State_Stopped) {
-			hr = m_DX9_VP.Render(0);
-		} else {
-			hr = m_DX9_VP.FillBlack();
-		}
+		hr = m_VideoProcessor->FillBlack();
 	}
 
 	return hr;
+}
+
+void CMpcVideoRenderer::DoAfterChangingDevice()
+{
+	if (m_pInputPin->IsConnected() == TRUE && m_pSink) {
+		DLog(L"CMpcVideoRenderer::DoAfterChangingDevice()");
+		m_bValidBuffer = false;
+		auto pPin = (IPin*)m_pInputPin;
+		m_pInputPin->AddRef();
+		EXECUTE_ASSERT(S_OK == m_pSink->Notify(EC_DISPLAY_CHANGED, (LONG_PTR)pPin, 0));
+		SetAbortSignal(TRUE);
+		SAFE_RELEASE(m_pMediaSample);
+		m_pInputPin->Release();
+	}
+}
+
+LRESULT CMpcVideoRenderer::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	if (m_hWndDrain && !InSendMessage() && !m_bIsFullscreen) {
+		switch (uMsg) {
+			case WM_CHAR:
+			case WM_DEADCHAR:
+			case WM_KEYDOWN:
+			case WM_KEYUP:
+			case WM_LBUTTONDBLCLK:
+			case WM_LBUTTONDOWN:
+			case WM_LBUTTONUP:
+			case WM_MBUTTONDBLCLK:
+			case WM_MBUTTONDOWN:
+			case WM_MBUTTONUP:
+			case WM_MOUSEACTIVATE:
+			case WM_MOUSEMOVE:
+			case WM_NCLBUTTONDBLCLK:
+			case WM_NCLBUTTONDOWN:
+			case WM_NCLBUTTONUP:
+			case WM_NCMBUTTONDBLCLK:
+			case WM_NCMBUTTONDOWN:
+			case WM_NCMBUTTONUP:
+			case WM_NCMOUSEMOVE:
+			case WM_NCRBUTTONDBLCLK:
+			case WM_NCRBUTTONDOWN:
+			case WM_NCRBUTTONUP:
+			case WM_RBUTTONDBLCLK:
+			case WM_RBUTTONDOWN:
+			case WM_RBUTTONUP:
+			case WM_XBUTTONDOWN:
+			case WM_XBUTTONUP:
+			case WM_XBUTTONDBLCLK:
+			case WM_MOUSEWHEEL:
+			case WM_MOUSEHWHEEL:
+			case WM_SYSCHAR:
+			case WM_SYSDEADCHAR:
+			case WM_SYSKEYDOWN:
+			case WM_SYSKEYUP:
+				PostMessageW(m_hWndDrain, uMsg, wParam, lParam);
+				return 0L;
+		}
+	}
+
+	return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }

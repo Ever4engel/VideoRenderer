@@ -1,5 +1,5 @@
 /*
- * (C) 2018-2019 see Authors.txt
+ * (C) 2018-2020 see Authors.txt
  *
  * This file is part of MPC-BE.
  *
@@ -27,23 +27,23 @@
 #define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
 #define VC_EXTRALEAN        // Exclude rarely-used stuff from Windows headers
 
+#ifdef _DEBUG
+#define D3D_DEBUG_INFO
+#endif
+
 #include <atlbase.h>
-#include <atlstr.h>
 #include <atlwin.h>
+#include <atltypes.h>
 
 #include <dmodshow.h>
 #include <dvdmedia.h>
-#include "../BaseClasses/streams.h"
 #include <VersionHelpers.h>
 #include <DirectXMath.h>
+#include <d3d9.h>
 
 #include <algorithm>
-// Workaround compilation errors when including GDI+ with NOMINMAX defined
-namespace Gdiplus
-{
-	using std::min;
-	using std::max;
-};
 #include <numeric>
 #include <vector>
 
+#include "../BaseClasses/streams.h"
+#include "../external/fmt/include/fmt/format.h"

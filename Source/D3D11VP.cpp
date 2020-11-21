@@ -75,14 +75,14 @@ HRESULT CD3D11VP::InitVideoDevice(ID3D11Device *pDevice, ID3D11DeviceContext *pC
 {
 	HRESULT hr = pDevice->QueryInterface(IID_PPV_ARGS(&m_pVideoDevice));
 	if (FAILED(hr)) {
-		DLog(L"CD3D11VP::InitVideoDevice() : QueryInterface(ID3D11VideoDevice) failed with error %s", HR2Str(hr));
+		DLog(L"CD3D11VP::InitVideoDevice() : QueryInterface(ID3D11VideoDevice) failed with error {}", HR2Str(hr));
 		ReleaseVideoDevice();
 		return hr;
 	}
 
 	hr = pContext->QueryInterface(IID_PPV_ARGS(&m_pVideoContext));
 	if (FAILED(hr)) {
-		DLog(L"CD3D11VP::InitVideoDevice() : QueryInterface(ID3D11VideoContext) failed with error %s", HR2Str(hr));
+		DLog(L"CD3D11VP::InitVideoDevice() : QueryInterface(ID3D11VideoContext) failed with error {}", HR2Str(hr));
 		ReleaseVideoDevice();
 		return hr;
 	}
@@ -91,16 +91,18 @@ HRESULT CD3D11VP::InitVideoDevice(ID3D11Device *pDevice, ID3D11DeviceContext *pC
 	D3D11_VIDEO_PROCESSOR_CONTENT_DESC ContentDesc = { D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, {}, 1920, 1080, {}, 1920, 1080, D3D11_VIDEO_USAGE_PLAYBACK_NORMAL };
 	CComPtr<ID3D11VideoProcessorEnumerator> pVideoProcEnum;
 	if (S_OK == m_pVideoDevice->CreateVideoProcessorEnumerator(&ContentDesc, &pVideoProcEnum)) {
-		CStringW input = L"Supported input DXGI formats (for 1080p):";
-		CStringW output = L"Supported output DXGI formats (for 1080p):";
+		std::wstring input = L"Supported input DXGI formats (for 1080p):";
+		std::wstring output = L"Supported output DXGI formats (for 1080p):";
 		for (int fmt = DXGI_FORMAT_R32G32B32A32_TYPELESS; fmt <= DXGI_FORMAT_B4G4R4A4_UNORM; fmt++) {
 			UINT uiFlags;
 			if (S_OK == pVideoProcEnum->CheckVideoProcessorFormat((DXGI_FORMAT)fmt, &uiFlags)) {
 				if (uiFlags & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT) {
-					input.AppendFormat(L"\n  %s", DXGIFormatToString((DXGI_FORMAT)fmt));
+					input.append(L"\n  ");
+					input.append(DXGIFormatToString((DXGI_FORMAT)fmt));
 				}
 				if (uiFlags & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT) {
-					output.AppendFormat(L"\n  %s", DXGIFormatToString((DXGI_FORMAT)fmt));
+					output.append(L"\n  ");
+					output.append(DXGIFormatToString((DXGI_FORMAT)fmt));
 				}
 			}
 		}
@@ -161,43 +163,43 @@ HRESULT CD3D11VP::InitVideoProcessor(const DXGI_FORMAT inputFmt, const UINT widt
 
 	hr = m_pVideoDevice->CreateVideoProcessorEnumerator(&ContentDesc, &m_pVideoProcessorEnum);
 	if (FAILED(hr)) {
-		DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : CreateVideoProcessorEnumerator() failed with error %s", HR2Str(hr));
+		DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : CreateVideoProcessorEnumerator() failed with error {}", HR2Str(hr));
 		return hr;
 	}
 
 	// get VideoProcessorCaps
 	hr = m_pVideoProcessorEnum->GetVideoProcessorCaps(&m_VPCaps);
 	if (FAILED(hr)) {
-		DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : GetVideoProcessorCaps() failed with error %s", HR2Str(hr));
+		DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : GetVideoProcessorCaps() failed with error {}", HR2Str(hr));
 		return hr;
 	}
 #ifdef _DEBUG
-	CStringW dbgstr = L"VideoProcessorCaps:";
-	dbgstr.AppendFormat(L"\n  Device YCbCr matrix conversion: %s", (m_VPCaps.DeviceCaps&D3D11_VIDEO_PROCESSOR_DEVICE_CAPS_YCbCr_MATRIX_CONVERSION) ? L"supported" : L"NOT supported");
-	dbgstr.AppendFormat(L"\n  Device YUV nominal range      : %s", (m_VPCaps.DeviceCaps&D3D11_VIDEO_PROCESSOR_DEVICE_CAPS_NOMINAL_RANGE) ? L"supported" : L"NOT supported");
-	dbgstr.AppendFormat(L"\n  Feature LEGACY                : %s", (m_VPCaps.FeatureCaps&D3D11_VIDEO_PROCESSOR_FEATURE_CAPS_LEGACY) ? L"Yes" : L"No");
-	dbgstr.Append(L"\n  Filter capabilities           :");
-	if (m_VPCaps.FilterCaps&D3D11_VIDEO_PROCESSOR_FILTER_CAPS_BRIGHTNESS) { dbgstr.Append(L" Brightness,"); }
-	if (m_VPCaps.FilterCaps&D3D11_VIDEO_PROCESSOR_FILTER_CAPS_CONTRAST)   { dbgstr.Append(L" Contrast,"); }
-	if (m_VPCaps.FilterCaps&D3D11_VIDEO_PROCESSOR_FILTER_CAPS_HUE)        { dbgstr.Append(L" Hue,"); }
-	if (m_VPCaps.FilterCaps&D3D11_VIDEO_PROCESSOR_FILTER_CAPS_SATURATION) { dbgstr.Append(L" Saturation,"); }
-	if (m_VPCaps.FilterCaps&D3D11_VIDEO_PROCESSOR_FILTER_CAPS_NOISE_REDUCTION)    { dbgstr.Append(L" Noise reduction,"); }
-	if (m_VPCaps.FilterCaps&D3D11_VIDEO_PROCESSOR_FILTER_CAPS_EDGE_ENHANCEMENT)   { dbgstr.Append(L" Edge enhancement,"); }
-	if (m_VPCaps.FilterCaps&D3D11_VIDEO_PROCESSOR_FILTER_CAPS_ANAMORPHIC_SCALING) { dbgstr.Append(L" Anamorphic scaling,"); }
-	if (m_VPCaps.FilterCaps&D3D11_VIDEO_PROCESSOR_FILTER_CAPS_STEREO_ADJUSTMENT)  { dbgstr.Append(L" Stereo adjustment"); }
-	dbgstr.TrimRight(',');
-	dbgstr.AppendFormat(L"\n  InputFormat interlaced RGB    : %s", (m_VPCaps.InputFormatCaps&D3D11_VIDEO_PROCESSOR_FORMAT_CAPS_RGB_INTERLACED) ? L"supported" : L"NOT supported");
-	dbgstr.AppendFormat(L"\n  InputFormat RGB ProcAmp       : %s", (m_VPCaps.InputFormatCaps&D3D11_VIDEO_PROCESSOR_FORMAT_CAPS_RGB_PROCAMP) ? L"supported" : L"NOT supported");
-	dbgstr.Append(L"\n  AutoStream image processing   :");
-	if (m_VPCaps.AutoStreamCaps&D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_DENOISE)             { dbgstr.Append(L" Denoise,"); }
-	if (m_VPCaps.AutoStreamCaps&D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_DERINGING)           { dbgstr.Append(L" Deringing,"); }
-	if (m_VPCaps.AutoStreamCaps&D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_EDGE_ENHANCEMENT)    { dbgstr.Append(L" Edge enhancement,"); }
-	if (m_VPCaps.AutoStreamCaps&D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_COLOR_CORRECTION)    { dbgstr.Append(L" Color correction,"); }
-	if (m_VPCaps.AutoStreamCaps&D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_FLESH_TONE_MAPPING)  { dbgstr.Append(L" Flesh tone mapping,"); }
-	if (m_VPCaps.AutoStreamCaps&D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_IMAGE_STABILIZATION) { dbgstr.Append(L" Image stabilization,"); }
-	if (m_VPCaps.AutoStreamCaps&D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_SUPER_RESOLUTION)    { dbgstr.Append(L" Super resolution,"); }
-	if (m_VPCaps.AutoStreamCaps&D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_ANAMORPHIC_SCALING)  { dbgstr.Append(L" Anamorphic scaling"); }
-	dbgstr.TrimRight(',');
+	std::wstring dbgstr = L"VideoProcessorCaps:";
+	dbgstr +=fmt::format(L"\n  Device YCbCr matrix conversion: {}", (m_VPCaps.DeviceCaps  & D3D11_VIDEO_PROCESSOR_DEVICE_CAPS_YCbCr_MATRIX_CONVERSION) ? L"supported" : L"NOT supported");
+	dbgstr +=fmt::format(L"\n  Device YUV nominal range      : {}", (m_VPCaps.DeviceCaps  & D3D11_VIDEO_PROCESSOR_DEVICE_CAPS_NOMINAL_RANGE) ? L"supported" : L"NOT supported");
+	dbgstr +=fmt::format(L"\n  Feature LEGACY                : {}", (m_VPCaps.FeatureCaps & D3D11_VIDEO_PROCESSOR_FEATURE_CAPS_LEGACY) ? L"Yes" : L"No");
+	dbgstr.append(L"\n  Filter capabilities           :");
+	if (m_VPCaps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_BRIGHTNESS) { dbgstr.append(L" Brightness,"); }
+	if (m_VPCaps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_CONTRAST)   { dbgstr.append(L" Contrast,"); }
+	if (m_VPCaps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_HUE)        { dbgstr.append(L" Hue,"); }
+	if (m_VPCaps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_SATURATION) { dbgstr.append(L" Saturation,"); }
+	if (m_VPCaps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_NOISE_REDUCTION)    { dbgstr.append(L" Noise reduction,"); }
+	if (m_VPCaps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_EDGE_ENHANCEMENT)   { dbgstr.append(L" Edge enhancement,"); }
+	if (m_VPCaps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_ANAMORPHIC_SCALING) { dbgstr.append(L" Anamorphic scaling,"); }
+	if (m_VPCaps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_STEREO_ADJUSTMENT)  { dbgstr.append(L" Stereo adjustment"); }
+	str_trim_end(dbgstr, ',');
+	dbgstr +=fmt::format(L"\n  InputFormat interlaced RGB    : {}", (m_VPCaps.InputFormatCaps & D3D11_VIDEO_PROCESSOR_FORMAT_CAPS_RGB_INTERLACED) ? L"supported" : L"NOT supported");
+	dbgstr +=fmt::format(L"\n  InputFormat RGB ProcAmp       : {}", (m_VPCaps.InputFormatCaps & D3D11_VIDEO_PROCESSOR_FORMAT_CAPS_RGB_PROCAMP) ? L"supported" : L"NOT supported");
+	dbgstr.append(L"\n  AutoStream image processing   :");
+	if (m_VPCaps.AutoStreamCaps & D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_DENOISE)             { dbgstr.append(L" Denoise,"); }
+	if (m_VPCaps.AutoStreamCaps & D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_DERINGING)           { dbgstr.append(L" Deringing,"); }
+	if (m_VPCaps.AutoStreamCaps & D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_EDGE_ENHANCEMENT)    { dbgstr.append(L" Edge enhancement,"); }
+	if (m_VPCaps.AutoStreamCaps & D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_COLOR_CORRECTION)    { dbgstr.append(L" Color correction,"); }
+	if (m_VPCaps.AutoStreamCaps & D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_FLESH_TONE_MAPPING)  { dbgstr.append(L" Flesh tone mapping,"); }
+	if (m_VPCaps.AutoStreamCaps & D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_IMAGE_STABILIZATION) { dbgstr.append(L" Image stabilization,"); }
+	if (m_VPCaps.AutoStreamCaps & D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_SUPER_RESOLUTION)    { dbgstr.append(L" Super resolution,"); }
+	if (m_VPCaps.AutoStreamCaps & D3D11_VIDEO_PROCESSOR_AUTO_STREAM_CAPS_ANAMORPHIC_SCALING)  { dbgstr.append(L" Anamorphic scaling"); }
+	str_trim_end(dbgstr, ',');
 	DLog(dbgstr);
 #endif
 
@@ -219,7 +221,7 @@ HRESULT CD3D11VP::InitVideoProcessor(const DXGI_FORMAT inputFmt, const UINT widt
 	hr = m_pVideoProcessorEnum->CheckVideoProcessorFormat(outputFmt, &uiFlags);
 	if (FAILED(hr) || 0 == (uiFlags & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT)) {
 		if (outputFmt != DXGI_FORMAT_B8G8R8A8_UNORM) {
-			DLog(L"CDX11VideoProcessor::InitializeD3D11VP() %s is not supported for D3D11 VP output. DXGI_FORMAT_B8G8R8A8_UNORM will be used.", DXGIFormatToString(outputFmt));
+			DLog(L"CDX11VideoProcessor::InitializeD3D11VP() {} is not supported for D3D11 VP output. DXGI_FORMAT_B8G8R8A8_UNORM will be used.", DXGIFormatToString(outputFmt));
 			outputFmt = DXGI_FORMAT_B8G8R8A8_UNORM;
 			hr = m_pVideoProcessorEnum->CheckVideoProcessorFormat(outputFmt, &uiFlags);
 			if (FAILED(hr) || 0 == (uiFlags & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT)) {
@@ -227,7 +229,7 @@ HRESULT CD3D11VP::InitVideoProcessor(const DXGI_FORMAT inputFmt, const UINT widt
 				return E_INVALIDARG;
 			}
 		} else {
-			DLog(L"CDX11VideoProcessor::InitializeD3D11VP() %s is not supported for D3D11 VP output.", DXGIFormatToString(outputFmt));
+			DLog(L"CDX11VideoProcessor::InitializeD3D11VP() {} is not supported for D3D11 VP output.", DXGIFormatToString(outputFmt));
 			return E_INVALIDARG;
 		}
 	}
@@ -256,17 +258,17 @@ HRESULT CD3D11VP::InitVideoProcessor(const DXGI_FORMAT inputFmt, const UINT widt
 		if (maxProcCaps) {
 			if (S_OK == m_pVideoProcessorEnum->GetVideoProcessorRateConversionCaps(m_RateConvIndex, &m_RateConvCaps)) {
 #ifdef _DEBUG
-				dbgstr.Format(L"RateConversionCaps[%u]:", m_RateConvIndex);
-				dbgstr.Append(L"\n  ProcessorCaps:");
-				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_BLEND)               { dbgstr.Append(L" Blend,"); }
-				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_BOB)                 { dbgstr.Append(L" Bob,"); }
-				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_ADAPTIVE)            { dbgstr.Append(L" Adaptive,"); }
-				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_MOTION_COMPENSATION) { dbgstr.Append(L" Motion Compensation,"); }
-				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_INVERSE_TELECINE)                { dbgstr.Append(L" Inverse Telecine,"); }
-				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_FRAME_RATE_CONVERSION)           { dbgstr.Append(L" Frame Rate Conversion"); }
-				dbgstr.TrimRight(',');
-				dbgstr.AppendFormat(L"\n  PastFrames   : %u", m_RateConvCaps.PastFrames);
-				dbgstr.AppendFormat(L"\n  FutureFrames : %u", m_RateConvCaps.FutureFrames);
+				dbgstr = fmt::format(L"RateConversionCaps[{}]:", m_RateConvIndex);
+				dbgstr.append(L"\n  ProcessorCaps:");
+				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_BLEND)               { dbgstr.append(L" Blend,"); }
+				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_BOB)                 { dbgstr.append(L" Bob,"); }
+				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_ADAPTIVE)            { dbgstr.append(L" Adaptive,"); }
+				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_MOTION_COMPENSATION) { dbgstr.append(L" Motion Compensation,"); }
+				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_INVERSE_TELECINE)                { dbgstr.append(L" Inverse Telecine,"); }
+				if (m_RateConvCaps.ProcessorCaps & D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_FRAME_RATE_CONVERSION)           { dbgstr.append(L" Frame Rate Conversion"); }
+				str_trim_end(dbgstr, ',');
+				dbgstr += fmt::format(L"\n  PastFrames   : {}", m_RateConvCaps.PastFrames);
+				dbgstr += fmt::format(L"\n  FutureFrames : {}", m_RateConvCaps.FutureFrames);
 				DLog(dbgstr);
 #endif
 			}
@@ -275,29 +277,27 @@ HRESULT CD3D11VP::InitVideoProcessor(const DXGI_FORMAT inputFmt, const UINT widt
 
 	hr = m_pVideoDevice->CreateVideoProcessor(m_pVideoProcessorEnum, m_RateConvIndex, &m_pVideoProcessor);
 	if (FAILED(hr)) {
-		DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : CreateVideoProcessor() failed with error %s", HR2Str(hr));
+		DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : CreateVideoProcessor() failed with error {}", HR2Str(hr));
 		return hr;
 	}
 
-	if (1) {
-		m_VPCaps = {};
-		hr = m_pVideoProcessorEnum->GetVideoProcessorCaps(&m_VPCaps);
-		if (FAILED(hr)) {
-			DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : GetVideoProcessorCaps() failed with error %s", HR2Str(hr));
-			return hr;
-		}
+	for (UINT i = 0; i < std::size(m_VPFilters); i++) {
+		auto& filter = m_VPFilters[i];
+		filter.support = m_VPCaps.FilterCaps & (1 << i);
+		HRESULT hr2 = E_FAIL;
+		if (filter.support) {
+			hr2 = m_pVideoProcessorEnum->GetVideoProcessorFilterRange((D3D11_VIDEO_PROCESSOR_FILTER)i, &filter.range);
+			DLogIf(SUCCEEDED(hr2) ,L"CDX11VideoProcessor::InitializeD3D11VP() : FilterRange({}) : {:5d}, {:3d}, {:4d}, {:f}",
+				i, filter.range.Minimum, filter.range.Default, filter.range.Maximum, filter.range.Multiplier);
 
-		for (UINT i = 0; i < std::size(m_VPFilterRange); i++) {
-			if (m_VPCaps.FilterCaps & (1 << i)) {
-				hr = m_pVideoProcessorEnum->GetVideoProcessorFilterRange((D3D11_VIDEO_PROCESSOR_FILTER)i, &m_VPFilterRange[i]);
-				if (FAILED(hr)) {
-					DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : GetVideoProcessorFilterRange(%u) failed with error %s", i, HR2Str(hr));
-					m_VPCaps.FilterCaps = 0;
-					break;
-				}
-				DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : FilterRange(%u) : %5d, %4d, %3d, %f",
-					i, m_VPFilterRange[i].Minimum, m_VPFilterRange[i].Maximum, m_VPFilterRange[i].Default, m_VPFilterRange[i].Multiplier);
+			if (i == D3D11_VIDEO_PROCESSOR_FILTER_NOISE_REDUCTION || i == D3D11_VIDEO_PROCESSOR_FILTER_EDGE_ENHANCEMENT) {
+				filter.value = filter.range.Default; // disable it
 			}
+		}
+		if (FAILED(hr2)) {
+			DLog(L"CDX11VideoProcessor::InitializeD3D11VP() : GetVideoProcessorFilterRange({}) failed with error {}", i, HR2Str(hr2));
+			filter.support = 0;
+			m_VPFilters[i].range = {};
 		}
 	}
 
@@ -417,16 +417,63 @@ HRESULT CD3D11VP::SetColorSpace(const DXVA2_ExtendedFormat exFmt)
 {
 	CheckPointer(m_pVideoContext, E_ABORT);
 
-	D3D11_VIDEO_PROCESSOR_COLOR_SPACE colorSpace = {};
-	if (exFmt.value) {
-		colorSpace.RGB_Range = 0; // output RGB always full range (0-255) // TODO
-		colorSpace.YCbCr_Matrix = (exFmt.VideoTransferMatrix == DXVA2_VideoTransferMatrix_BT601) ? 0 : 1;
-		colorSpace.Nominal_Range = (exFmt.NominalRange == DXVA2_NominalRange_0_255)
-			? D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255
-			: D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+#if 0
+	CComPtr<ID3D11VideoContext1> pVideoContext1;
+	if (S_OK == m_pVideoContext->QueryInterface(IID_PPV_ARGS(&pVideoContext1))) {
+		DLog(L"CD3D11VP::SetColorSpace() : used ID3D11VideoContext1");
+
+		DXGI_COLOR_SPACE_TYPE cstype = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+		if (exFmt.value) {
+			bool fullrange = (exFmt.NominalRange == DXVA2_NominalRange_0_255);
+			bool topleft = (exFmt.VideoChromaSubsampling == DXVA2_VideoChromaSubsampling_Cosited);
+
+			if (exFmt.VideoTransferMatrix == VIDEOTRANSFERMATRIX_BT2020_10 || exFmt.VideoTransferMatrix == VIDEOTRANSFERMATRIX_BT2020_12) {
+				if (exFmt.VideoTransferFunction == VIDEOTRANSFUNC_2084) {
+					cstype = topleft ? DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_TOPLEFT_P2020 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020;
+				}
+				else if (exFmt.VideoTransferFunction == VIDEOTRANSFUNC_HLG) {
+					cstype = fullrange ? DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020 : DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020;
+				}
+				else if (exFmt.VideoTransferFunction == DXVA2_VideoTransFunc_sRGB) {
+					cstype = topleft ? DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_TOPLEFT_P2020 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_LEFT_P2020;
+				}
+				else { // DXVA2_VideoTransFunc_22 and other
+					cstype = topleft ? DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_TOPLEFT_P2020
+						: fullrange ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P2020 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P2020;
+				}
+			}
+			else if (exFmt.VideoTransferMatrix == DXVA2_VideoTransferMatrix_BT601) {
+				cstype = fullrange ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P601 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601;
+			}
+			else { // DXVA2_VideoTransferMatrix_BT709 and other
+				if (exFmt.VideoTransferFunction == DXVA2_VideoTransFunc_sRGB) {
+					cstype = DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_LEFT_P709;
+				}
+				else { // DXVA2_VideoTransFunc_22  and other
+					cstype = fullrange ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P709 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709;
+				}
+			}
+		}
+		pVideoContext1->VideoProcessorSetStreamColorSpace1(m_pVideoProcessor, 0, cstype);
+		pVideoContext1->VideoProcessorSetOutputColorSpace1(m_pVideoProcessor, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
+		DLog(L"ID3D11VideoContext1::VideoProcessorSetStreamColorSpace1({})", cstype);
 	}
-	m_pVideoContext->VideoProcessorSetStreamColorSpace(m_pVideoProcessor, 0, &colorSpace);
-	m_pVideoContext->VideoProcessorSetOutputColorSpace(m_pVideoProcessor, &colorSpace);
+	else
+#endif
+	{
+		DLog(L"CD3D11VP::SetColorSpace() : used ID3D11VideoContext");
+
+		D3D11_VIDEO_PROCESSOR_COLOR_SPACE colorSpace = {};
+		if (exFmt.value) {
+			colorSpace.RGB_Range = 0; // output RGB always full range (0-255)
+			colorSpace.YCbCr_Matrix = (exFmt.VideoTransferMatrix == DXVA2_VideoTransferMatrix_BT601) ? 0 : 1;
+			colorSpace.Nominal_Range = (exFmt.NominalRange == DXVA2_NominalRange_0_255)
+				? D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255
+				: D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+		}
+		m_pVideoContext->VideoProcessorSetStreamColorSpace(m_pVideoProcessor, 0, &colorSpace);
+		m_pVideoContext->VideoProcessorSetOutputColorSpace(m_pVideoProcessor, &colorSpace);
+	}
 
 	return S_OK;
 }
@@ -442,10 +489,10 @@ void CD3D11VP::SetRotation(D3D11_VIDEO_PROCESSOR_ROTATION rotation)
 
 void CD3D11VP::SetProcAmpValues(DXVA2_ProcAmpValues *pValues)
 {
-	m_VPFilterLevels[0] = ValueDXVA2toD3D11(pValues->Brightness, m_VPFilterRange[0]);
-	m_VPFilterLevels[1] = ValueDXVA2toD3D11(pValues->Contrast,   m_VPFilterRange[1]);
-	m_VPFilterLevels[2] = ValueDXVA2toD3D11(pValues->Hue,        m_VPFilterRange[2]);
-	m_VPFilterLevels[3] = ValueDXVA2toD3D11(pValues->Saturation, m_VPFilterRange[3]);
+	m_VPFilters[0].value = ValueDXVA2toD3D11(pValues->Brightness, m_VPFilters[0].range);
+	m_VPFilters[1].value = ValueDXVA2toD3D11(pValues->Contrast,   m_VPFilters[1].range);
+	m_VPFilters[2].value = ValueDXVA2toD3D11(pValues->Hue,        m_VPFilters[2].range);
+	m_VPFilters[3].value = ValueDXVA2toD3D11(pValues->Saturation, m_VPFilters[3].range);
 	m_bUpdateFilters = true;
 }
 
@@ -458,14 +505,11 @@ HRESULT CD3D11VP::Process(ID3D11Texture2D* pRenderTarget, const D3D11_VIDEO_FRAM
 		m_pVideoContext->VideoProcessorSetStreamFrameFormat(m_pVideoProcessor, 0, sampleFormat);
 
 		if (m_bUpdateFilters) {
-			BOOL bEnable0 = (m_VPFilterLevels[0] != m_VPFilterRange[0].Default);
-			BOOL bEnable1 = (m_VPFilterLevels[1] != m_VPFilterRange[1].Default);
-			BOOL bEnable2 = (m_VPFilterLevels[2] != m_VPFilterRange[2].Default);
-			BOOL bEnable3 = (m_VPFilterLevels[3] != m_VPFilterRange[3].Default);
-			m_pVideoContext->VideoProcessorSetStreamFilter(m_pVideoProcessor, 0, D3D11_VIDEO_PROCESSOR_FILTER_BRIGHTNESS, bEnable0, m_VPFilterLevels[0]);
-			m_pVideoContext->VideoProcessorSetStreamFilter(m_pVideoProcessor, 0, D3D11_VIDEO_PROCESSOR_FILTER_CONTRAST,   bEnable1, m_VPFilterLevels[1]);
-			m_pVideoContext->VideoProcessorSetStreamFilter(m_pVideoProcessor, 0, D3D11_VIDEO_PROCESSOR_FILTER_HUE,        bEnable2, m_VPFilterLevels[2]);
-			m_pVideoContext->VideoProcessorSetStreamFilter(m_pVideoProcessor, 0, D3D11_VIDEO_PROCESSOR_FILTER_SATURATION, bEnable3, m_VPFilterLevels[3]);
+			for (UINT i = 0; i < std::size(m_VPFilters); i++) {
+				auto& filter = m_VPFilters[i];
+				BOOL bEnable = (filter.support && filter.value != filter.range.Default);
+				m_pVideoContext->VideoProcessorSetStreamFilter(m_pVideoProcessor, 0, (D3D11_VIDEO_PROCESSOR_FILTER)i, bEnable, filter.value);
+			}
 			m_bUpdateFilters = false;
 		}
 	}
@@ -475,7 +519,7 @@ HRESULT CD3D11VP::Process(ID3D11Texture2D* pRenderTarget, const D3D11_VIDEO_FRAM
 	CComPtr<ID3D11VideoProcessorOutputView> pOutputView;
 	HRESULT hr = m_pVideoDevice->CreateVideoProcessorOutputView(pRenderTarget, m_pVideoProcessorEnum, &OutputViewDesc, &pOutputView);
 	if (FAILED(hr)) {
-		DLog(L"CDX11VideoProcessor::ProcessD3D11() : CreateVideoProcessorOutputView() failed with error %s", HR2Str(hr));
+		DLog(L"CDX11VideoProcessor::ProcessD3D11() : CreateVideoProcessorOutputView() failed with error {}", HR2Str(hr));
 		return hr;
 	}
 
@@ -504,7 +548,7 @@ HRESULT CD3D11VP::Process(ID3D11Texture2D* pRenderTarget, const D3D11_VIDEO_FRAM
 	}
 	hr = m_pVideoContext->VideoProcessorBlt(m_pVideoProcessor, pOutputView, StreamData.InputFrameOrField, 1, &StreamData);
 	if (FAILED(hr)) {
-		DLog(L"CDX11VideoProcessor::ProcessD3D11() : VideoProcessorBlt() failed with error %s", HR2Str(hr));
+		DLog(L"CDX11VideoProcessor::ProcessD3D11() : VideoProcessorBlt() failed with error {}", HR2Str(hr));
 	}
 
 	return hr;

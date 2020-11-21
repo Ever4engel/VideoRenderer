@@ -144,6 +144,10 @@ public:
 		return hr;
 	}
 
+	UINT Size() {
+		return size;
+	}
+
 	void Release() {
 		Texs[0].Release();
 		Texs[1].Release();
@@ -164,7 +168,7 @@ public:
 
 struct ExternalPixelShader9_t
 {
-	CStringW name; // TODO
+	std::wstring name;
 	CComPtr<IDirect3DPixelShader9> shader;
 };
 

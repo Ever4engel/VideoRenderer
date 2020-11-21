@@ -21,6 +21,10 @@ CBaseVideoRenderer2::CBaseVideoRenderer2(
     m_bSupplierHandlingQuality(FALSE)
 {
     ResetStreamingTimes();
+#ifdef _DEBUG
+	DbgSetModuleLevel(LOG_TRACE, DWORD_MAX);
+	DbgSetModuleLevel(LOG_ERROR, DWORD_MAX);
+#endif
 } // Constructor
 
 
@@ -763,18 +767,27 @@ BOOL CBaseVideoRenderer2::ScheduleSample(IMediaSample *pMediaSample)
 
 	REFERENCE_TIME StartTime, EndTime;
 	if (!pMediaSample || FAILED(pMediaSample->GetTime(&StartTime, &EndTime))) {
-		if (m_pClock && S_OK == m_pClock->GetTime(&StartTime)) {
+		if (m_pClock && SUCCEEDED(m_pClock->GetTime(&StartTime))) {
 			StartTime -= m_tStart;
 		} else {
-			StartTime = m_tRenderStart * 10000;
+			StartTime = m_tRenderStart * 10000ll;
 		}
 	}
-	m_FrameStats.Add(StartTime);
+	m_FrameStats.Add(StartTime); // do it for every input frame
 
     BOOL bDrawImage = CBaseRenderer::ScheduleSample(pMediaSample);
     if (bDrawImage == FALSE) {
 		//++m_cFramesDropped;
 		m_DrawStats.m_dropped++;
+#if 0 && _DEBUG
+		REFERENCE_TIME clockTime;
+		if (m_pClock && SUCCEEDED(m_pClock->GetTime(&clockTime))) {
+			clockTime -= m_tStart;
+			DbgLog((LOG_TRACE, 0, L"Frame %lld ms is dropped, lateness %lld ms", StartTime / 10000, (clockTime - StartTime) / 10000));
+		} else {
+			DbgLog((LOG_TRACE, 0, L"Frame %lld ms is dropped.", StartTime / 10000));
+		}
+#endif
 		return FALSE;
     }
 

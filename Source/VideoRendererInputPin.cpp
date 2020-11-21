@@ -44,8 +44,8 @@ STDMETHODIMP CVideoRendererInputPin::NonDelegatingQueryInterface(REFIID riid, vo
 	CheckPointer(ppv, E_POINTER);
 
 	return
-		(riid == __uuidof(IMFGetService)) ? GetInterface((IMFGetService*)this, ppv) :
-		(riid == __uuidof(ID3D11DecoderConfiguration)) ? GetInterface((ID3D11DecoderConfiguration*)this, ppv) :
+		QI(IMFGetService)
+		QI(ID3D11DecoderConfiguration)
 		__super::NonDelegatingQueryInterface(riid, ppv);
 }
 
@@ -180,14 +180,19 @@ STDMETHODIMP CVideoRendererInputPin::SetSurfaceType(DXVA2_SurfaceType dwType)
 // ID3D11DecoderConfiguration
 STDMETHODIMP CVideoRendererInputPin::ActivateD3D11Decoding(ID3D11Device *pDevice, ID3D11DeviceContext *pContext, HANDLE hMutex, UINT nFlags)
 {
-	const auto hr = m_pBaseRenderer->m_bUsedD3D11 ? m_pBaseRenderer->m_DX11_VP.SetDevice(pDevice, pContext) : E_FAIL;
+	HRESULT hr = E_FAIL;
+	if (m_pBaseRenderer->m_VideoProcessor->Type() == VP_DX11) {
+		if (auto DX11VP = dynamic_cast<CDX11VideoProcessor*>(m_pBaseRenderer->m_VideoProcessor)) {
+			hr = DX11VP->SetDevice(pDevice, pContext, true);
+		}
+	}
 	m_bD3D11 = (hr == S_OK);
 	return hr;
 }
 
 UINT STDMETHODCALLTYPE CVideoRendererInputPin::GetD3D11AdapterIndex()
 {
-	return m_pBaseRenderer->m_DX11_VP.m_nCurrentAdapter;
+	return m_pBaseRenderer->m_VideoProcessor->GetCurrentAdapter();
 }
 
 void CVideoRendererInputPin::SetNewMediaType(const CMediaType& mt)
@@ -195,10 +200,10 @@ void CVideoRendererInputPin::SetNewMediaType(const CMediaType& mt)
 	DLog(L"CVideoRendererInputPin::SetNewMediaType()");
 
 	SAFE_DELETE(m_pNewMT);
-	m_pNewMT = new CMediaType(mt);
 	auto pAlloc = static_cast<CCustomAllocator*>(m_pAllocator);
 	if (pAlloc) {
-		pAlloc->SetNewMediaType(*m_pNewMT);
-		SAFE_DELETE(m_pNewMT);
+		pAlloc->SetNewMediaType(mt);
+	} else {
+		m_pNewMT = new CMediaType(mt);
 	}
 }

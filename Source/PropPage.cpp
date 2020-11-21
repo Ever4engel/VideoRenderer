@@ -21,6 +21,7 @@
 #include "stdafx.h"
 #include "resource.h"
 #include "Helper.h"
+#include "DisplayConfig.h"
 #include "PropPage.h"
 
 void SetCursor(HWND hWnd, LPCWSTR lpCursorName)
@@ -96,6 +97,9 @@ void CVRMainPPage::SetControls()
 
 	CheckDlgButton(IDC_CHECK6, m_SetsPP.bInterpolateAt50pct ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_CHECK10, m_SetsPP.bUseDither   ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_CHECK11, m_SetsPP.bExclusiveFS ? BST_CHECKED : BST_UNCHECKED);
+
+	SendDlgItemMessageW(IDC_COMBO6, CB_SETCURSEL, m_SetsPP.iResizeStats, 0);
 
 	SendDlgItemMessageW(IDC_COMBO5, CB_SETCURSEL, m_SetsPP.iChromaScaling, 0);
 	SendDlgItemMessageW(IDC_COMBO2, CB_SETCURSEL, m_SetsPP.iUpscaling, 0);
@@ -157,11 +161,16 @@ HRESULT CVRMainPPage::OnActivate()
 	}
 	EnableControls();
 
+	SendDlgItemMessageW(IDC_COMBO6, CB_ADDSTRING, 0, (LPARAM)L"Fixed font size");
+	SendDlgItemMessageW(IDC_COMBO6, CB_ADDSTRING, 0, (LPARAM)L"Increase font by window");
+	//SendDlgItemMessageW(IDC_COMBO6, CB_ADDSTRING, 0, (LPARAM)L"Increase by DPI"); // TODO
+
 	ComboBox_AddStringData(m_hWnd, IDC_COMBO1, L"Auto 8/10-bit Integer",  0);
 	ComboBox_AddStringData(m_hWnd, IDC_COMBO1, L"8-bit Integer",          8);
 	ComboBox_AddStringData(m_hWnd, IDC_COMBO1, L"10-bit Integer",        10);
 	ComboBox_AddStringData(m_hWnd, IDC_COMBO1, L"16-bit Floating Point", 16);
 
+	SendDlgItemMessageW(IDC_COMBO5, CB_ADDSTRING, 0, (LPARAM)L"Nearest-neighbor");
 	SendDlgItemMessageW(IDC_COMBO5, CB_ADDSTRING, 0, (LPARAM)L"Bilinear");
 	SendDlgItemMessageW(IDC_COMBO5, CB_ADDSTRING, 0, (LPARAM)L"Catmull-Rom");
 
@@ -249,16 +258,30 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 				SetDirty();
 				return (LRESULT)1;
 			}
+			if (nID == IDC_CHECK11) {
+				m_SetsPP.bExclusiveFS = IsDlgButtonChecked(IDC_CHECK11) == BST_CHECKED;
+				SetDirty();
+				return (LRESULT)1;
+			}
 
 			if (nID == IDC_BUTTON1) {
 				m_SetsPP.SetDefault();
 				SetControls();
+				EnableControls();
 				SetDirty();
 				return (LRESULT)1;
 			}
 		}
 
 		if (HIWORD(wParam) == CBN_SELCHANGE) {
+			if (nID == IDC_COMBO6) {
+				lValue = SendDlgItemMessageW(IDC_COMBO6, CB_GETCURSEL, 0, 0);
+				if (lValue != m_SetsPP.iResizeStats) {
+					m_SetsPP.iResizeStats = lValue;
+					SetDirty();
+					return (LRESULT)1;
+				}
+			}
 			if (nID == IDC_COMBO1) {
 				lValue = ComboBox_GetCurItemData(m_hWnd, IDC_COMBO1);
 				if (lValue != m_SetsPP.iTextureFmt) {
@@ -377,17 +400,77 @@ HRESULT CVRInfoPPage::OnActivate()
 		return S_OK;
 	}
 
-	CStringW strInfo(L"Windows ");
-	strInfo.Append(GetWindowsVersion());
-	strInfo.Append(L"\r\n");
+	std::wstring strInfo(L"Windows ");
+	strInfo.append(GetWindowsVersion());
+	strInfo.append(L"\r\n");
 
-	CStringW strVP;
+	std::wstring strVP;
 	if (S_OK == m_pVideoRenderer->GetVideoProcessorInfo(strVP)) {
-		strVP.Replace(L"\n", L"\r\n");
+		str_replace(strVP, L"\n", L"\r\n");
+		strInfo.append(strVP);
 	}
-	strInfo.Append(strVP);
 
-	SetDlgItemTextW(IDC_EDIT1, strInfo);
+#ifdef _DEBUG
+	{
+		std::vector<DisplayConfig_t> displayConfigs;
+
+		bool ret = GetDisplayConfigs(displayConfigs);
+
+		strInfo.append(L"\r\n");
+
+		for (const auto& dc : displayConfigs) {
+			double freq = (double)dc.refreshRate.Numerator / (double)dc.refreshRate.Denominator;
+			strInfo += fmt::format(L"\r\n{} - {:.3f} Hz", dc.displayName, freq);
+
+			if (dc.bitsPerChannel) {
+				const wchar_t* colenc = nullptr;
+				switch (dc.colorEncoding) {
+				case DISPLAYCONFIG_COLOR_ENCODING_RGB:
+					colenc = L"RGB";
+					break;
+				case DISPLAYCONFIG_COLOR_ENCODING_YCBCR444:
+					colenc = L"YCbCr444";
+					break;
+				case DISPLAYCONFIG_COLOR_ENCODING_YCBCR422:
+					colenc = L"YCbCr422";
+					break;
+				case DISPLAYCONFIG_COLOR_ENCODING_YCBCR420:
+					colenc = L"YCbCr420";
+					break;
+				}
+				if (colenc) {
+					strInfo += fmt::format(L" {}", colenc);
+				}
+				strInfo += fmt::format(L" {}-bit", dc.bitsPerChannel);
+			}
+
+			const wchar_t* output = nullptr;
+			switch (dc.outputTechnology) {
+			case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HD15:
+				output = L"VGA";
+				break;
+			case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DVI:
+				output = L"DVI";
+				break;
+			case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI:
+				output = L"HDMI";
+				break;
+			case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EXTERNAL:
+			case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EMBEDDED:
+				output = L"DisplayPort";
+				break;
+			case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL:
+				output = L"Internal";
+				break;
+			}
+			if (output) {
+				strInfo += fmt::format(L" {}", output);
+			}
+		}
+	}
+#endif
+
+	SetDlgItemTextW(IDC_EDIT1, strInfo.c_str());
 
 	SetDlgItemTextW(IDC_EDIT2, GetNameAndVersion());
 

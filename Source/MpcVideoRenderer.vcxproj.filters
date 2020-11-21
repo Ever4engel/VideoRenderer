@@ -16,6 +16,9 @@
     <Filter Include="D3DUtil">
       <UniqueIdentifier>{0aaf154f-df6e-43da-b8e2-ef67cfea1a2e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Utils">
+      <UniqueIdentifier>{ba2bad6e-f01e-4ea9-9209-8005fcd5bc5e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -39,7 +42,7 @@
     <ClCompile Include="DX11VideoProcessor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Time.cpp">
+    <ClCompile Include="Times.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="VideoRendererInputPin.cpp">
@@ -66,9 +69,6 @@
     <ClCompile Include="DX11Helper.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="CPUInfo.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="D3D11VP.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -83,6 +83,27 @@
     </ClCompile>
     <ClCompile Include="D3DUtil\D3D11Font.cpp">
       <Filter>D3DUtil</Filter>
+    </ClCompile>
+    <ClCompile Include="DisplayConfig.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D3DUtil\D3D9Geometry.cpp">
+      <Filter>D3DUtil</Filter>
+    </ClCompile>
+    <ClCompile Include="VideoProcessor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Utils\StringUtil.cpp">
+      <Filter>Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="Utils\Util.cpp">
+      <Filter>Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="Utils\CPUInfo.cpp">
+      <Filter>Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="MediaSampleSideData.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -113,7 +134,7 @@
     <ClInclude Include="FrameStats.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Time.h">
+    <ClInclude Include="Times.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="VideoRendererInputPin.h">
@@ -140,9 +161,6 @@
     <ClInclude Include="DX9Device.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="CPUInfo.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="D3D11VP.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -166,6 +184,24 @@
     </ClInclude>
     <ClInclude Include="D3DUtil\D3D11Font.h">
       <Filter>D3DUtil</Filter>
+    </ClInclude>
+    <ClInclude Include="DisplayConfig.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="VideoProcessor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Utils\StringUtil.h">
+      <Filter>Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="Utils\Util.h">
+      <Filter>Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="Utils\CPUInfo.h">
+      <Filter>Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="MediaSampleSideData.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

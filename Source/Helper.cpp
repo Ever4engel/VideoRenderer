@@ -20,132 +20,69 @@
 
 #include "stdafx.h"
 #include <memory>
-#include "CPUInfo.h"
+#include <wincodec.h>
+#include "Utils/CPUInfo.h"
 #include "../Include/Version.h"
 #include "Helper.h"
 
-#ifndef _WIN32_WINNT_WINTHRESHOLD
-#define _WIN32_WINNT_WINTHRESHOLD 0x0A00
-VERSIONHELPERAPI IsWindows10OrGreater()
+std::wstring GetVersionStr()
 {
-	return IsWindowsVersionOrGreater(HIBYTE(_WIN32_WINNT_WINTHRESHOLD), LOBYTE(_WIN32_WINNT_WINTHRESHOLD), 0);
-}
-#endif
-
-LPCWSTR GetWindowsVersion()
-{
-	if (IsWindows10OrGreater()) {
-		return L"10";
+	std::wstring version = _CRT_WIDE(MPCVR_VERSION_STR);
+#if MPCIS_RELEASE != 1
+	if (strcmp(MPCVR_BRANCH_STR, "master") != 0) {
+		version += fmt::format(L".{}", _CRT_WIDE(MPCVR_BRANCH_STR));
 	}
-	else if (IsWindows8Point1OrGreater()) {
-		return L"8.1";
-	}
-	else if (IsWindows8OrGreater()) {
-		return L"8";
-	}
-	else if (IsWindows7SP1OrGreater()) {
-		return L"7 SP1";
-	}
-	else if (IsWindows7OrGreater()) {
-		return L"7";
-	}
-	return L"Vista or older";
-}
-
-CStringW GetVersionStr()
-{
-	CStringW version;
-#if MPCVR_RELEASE
-	version.Format(L"v%S", MPCVR_VERSION_STR);
-#else
-	version.Format(L"v%S (git-%S-%S)",
-		MPCVR_VERSION_STR,
-		_CRT_STRINGIZE(MPCVR_REV_DATE),
-		_CRT_STRINGIZE(MPCVR_REV_HASH)
+	version += fmt::format(L" (git-{}-{})",
+		_CRT_WIDE(_CRT_STRINGIZE(MPCVR_REV_DATE)),
+		_CRT_WIDE(_CRT_STRINGIZE(MPCVR_REV_HASH))
 	);
 #endif
 #ifdef _WIN64
-	version.Append(L" x64");
+	version.append(L" x64");
 #endif
 #ifdef _DEBUG
-	version.Append(L" DEBUG");
+	version.append(L" DEBUG");
 #endif
 	return version;
 }
 
 LPCWSTR GetNameAndVersion()
 {
-	static CStringW version = L"MPC Video Renderer " + GetVersionStr();
+	static std::wstring version = L"MPC Video Renderer " + GetVersionStr();
 
-	return (LPCWSTR)version;
+	return version.c_str();
 }
 
-CStringW HR2Str(const HRESULT hr)
-{
-	CStringW str;
-#define UNPACK_VALUE(VALUE) case VALUE: str = L#VALUE; break;
-#define UNPACK_HR_WIN32(VALUE) case (((VALUE) & 0x0000FFFF) | (FACILITY_WIN32 << 16) | 0x80000000): str = L#VALUE; break;
-	switch (hr) {
-		// common HRESULT values https://docs.microsoft.com/en-us/windows/desktop/seccrypto/common-hresult-values
-		UNPACK_VALUE(S_OK);
-		UNPACK_VALUE(S_FALSE);
-		UNPACK_VALUE(E_NOTIMPL);
-		UNPACK_VALUE(E_NOINTERFACE);
-		UNPACK_VALUE(E_POINTER);
-		UNPACK_VALUE(E_ABORT);
-		UNPACK_VALUE(E_FAIL);
-		UNPACK_VALUE(E_UNEXPECTED);
-		UNPACK_VALUE(E_ACCESSDENIED);
-		UNPACK_VALUE(E_HANDLE);
-		UNPACK_VALUE(E_OUTOFMEMORY);
-		UNPACK_VALUE(E_INVALIDARG);
-		// some D3DERR values https://docs.microsoft.com/en-us/windows/desktop/direct3d9/d3derr
-		UNPACK_VALUE(D3DERR_DEVICEHUNG);
-		UNPACK_VALUE(D3DERR_DEVICELOST);
-		UNPACK_VALUE(D3DERR_DEVICENOTRESET);
-		UNPACK_VALUE(D3DERR_DRIVERINTERNALERROR);
-		UNPACK_VALUE(D3DERR_INVALIDCALL);
-		UNPACK_VALUE(D3DERR_OUTOFVIDEOMEMORY);
-		UNPACK_VALUE(D3DERR_WASSTILLDRAWING);
-		// some System Error Codes
-		UNPACK_HR_WIN32(ERROR_INVALID_WINDOW_HANDLE);
-	default:
-		str.Format(L"0x%08x", hr);
-	};
-#undef UNPACK_VALUE
-#undef UNPACK_HR_WIN32
-	return str;
-}
-
-CStringW MediaType2Str(const CMediaType *pmt)
+std::wstring MediaType2Str(const CMediaType *pmt)
 {
 	if (!pmt) {
 		return L"no media type";
 	}
 
-	CStringW str;
+	const auto& FmtParams = GetFmtConvParams(pmt->subtype);
 
-	str.AppendFormat(L"MajorType : %s", (pmt->majortype == MEDIATYPE_Video) ? L"Video" : L"unknown");
-	const auto FmtConvParams = GetFmtConvParams(pmt->subtype);
-	str.AppendFormat(L"\nSubType   : %S", FmtConvParams.str);
-	str.Append(L"\nFormatType: ");
+	std::wstring str(L"MajorType : ");
+	str.append((pmt->majortype == MEDIATYPE_Video) ? L"Video" : L"unknown");
 
+	str += fmt::format(L"\nSubType   : {}", FmtParams.str);
+
+	str.append(L"\nFormatType: ");
 	if (pmt->formattype == FORMAT_VideoInfo2) {
-		str.Append(L"VideoInfo2");
+		str.append(L"VideoInfo2");
 		const VIDEOINFOHEADER2* vih2 = (VIDEOINFOHEADER2*)pmt->pbFormat;
-		str.AppendFormat(L"\nBimapSize : %d x %d", vih2->bmiHeader.biWidth, vih2->bmiHeader.biHeight);
-		str.AppendFormat(L"\nSourceRect: (%d, %d, %d, %d)", vih2->rcSource.left, vih2->rcSource.top, vih2->rcSource.right, vih2->rcSource.bottom);
-		str.AppendFormat(L"\nSizeImage : %u bytes", vih2->bmiHeader.biSizeImage);
+		str += fmt::format(L"\nBimapSize : {} x {}", vih2->bmiHeader.biWidth, vih2->bmiHeader.biHeight);
+		str += fmt::format(L"\nSourceRect: ({}, {}, {}, {})", vih2->rcSource.left, vih2->rcSource.top, vih2->rcSource.right, vih2->rcSource.bottom);
+		str += fmt::format(L"\nSizeImage : {} bytes", vih2->bmiHeader.biSizeImage);
 	}
 	else if (pmt->formattype == FORMAT_VideoInfo) {
-		str.Append(L"VideoInfo");
+		str.append(L"VideoInfo");
 		const VIDEOINFOHEADER* vih = (VIDEOINFOHEADER*)pmt->pbFormat;
-		str.AppendFormat(L"\nBimapSize : %d x %d", vih->bmiHeader.biWidth, vih->bmiHeader.biHeight);
-		str.AppendFormat(L"\nSourceRect: (%d, %d, %d, %d)", vih->rcSource.left, vih->rcSource.top, vih->rcSource.right, vih->rcSource.bottom);
-		str.AppendFormat(L"\nSizeImage : %u bytes", vih->bmiHeader.biSizeImage);
+		str += fmt::format(L"\nBimapSize : {} x {}", vih->bmiHeader.biWidth, vih->bmiHeader.biHeight);
+		str += fmt::format(L"\nSourceRect: ({}, {}, {}, {})", vih->rcSource.left, vih->rcSource.top, vih->rcSource.right, vih->rcSource.bottom);
+		str += fmt::format(L"\nSizeImage : {} bytes", vih->bmiHeader.biSizeImage);
 	}
 	else {
-		str.Append(L"unknown");
+		str.append(L"unknown");
 	}
 
 	return str;
@@ -216,7 +153,7 @@ const wchar_t* DXGIFormatToString(const DXGI_FORMAT format)
 	return L"UNKNOWN";
 }
 
-const wchar_t* DXVA2VPDeviceToString(const GUID& guid)
+std::wstring DXVA2VPDeviceToString(const GUID& guid)
 {
 	if (guid == DXVA2_VideoProcProgressiveDevice) {
 		return L"ProgressiveDevice";
@@ -228,7 +165,7 @@ const wchar_t* DXVA2VPDeviceToString(const GUID& guid)
 		return L"SoftwareDevice";
 	}
 
-	return CStringFromGUID(guid);
+	return GUIDtoWString(guid);
 }
 
 static const DXVA2_ValueRange s_DefaultDXVA2ProcAmpRanges[4] = {
@@ -277,30 +214,30 @@ static DX11PlanarPrms_t DX11PlanarYV16 = { DXGI_FORMAT_R8_UNORM,  DXGI_FORMAT_R8
 static DX11PlanarPrms_t DX11PlanarYV24 = { DXGI_FORMAT_R8_UNORM,  DXGI_FORMAT_R8_UNORM,     DXGI_FORMAT_R8_UNORM, 1, 1 };
 
 static const FmtConvParams_t s_FmtConvMapping[] = {
-	// cformat |   subtype          | str     | DXVA2Format    | D3DFormat(DX9)    |pDX9Planes| VP11Format                | DX11Format                |  pDX11Planes  |Packsize|PitchCoeff| CSType|Subsampling|CDepth| Func           |FuncSSSE3
-	{CF_NONE,   GUID_NULL,           nullptr,  D3DFMT_UNKNOWN,  D3DFMT_UNKNOWN,        nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_UNKNOWN,               nullptr,       0, 0,        CS_YUV,    0,       0,     nullptr,                  nullptr},
-	{CF_YV12,   MEDIASUBTYPE_YV12,   "YV12",   D3DFMT_YV12,     D3DFMT_YV12,    &DX9PlanarYV12, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarYV12,       1, 3,        CS_YUV,  420,       8,     &CopyFrameYV12,           nullptr},
-	{CF_NV12,   MEDIASUBTYPE_NV12,   "NV12",   D3DFMT_NV12,     D3DFMT_NV12,    &DX9PlanarNV12, DXGI_FORMAT_NV12,           DXGI_FORMAT_NV12,          &DX11PlanarNV12,       1, 3,        CS_YUV,  420,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_P010,   MEDIASUBTYPE_P010,   "P010",   D3DFMT_P010,     D3DFMT_P010,    &DX9PlanarP01x, DXGI_FORMAT_P010,           DXGI_FORMAT_P010,          &DX11PlanarP01x,       2, 3,        CS_YUV,  420,       10,    &CopyFrameAsIs,           nullptr},
-	{CF_P016,   MEDIASUBTYPE_P016,   "P016",   D3DFMT_P016,     D3DFMT_P016,    &DX9PlanarP01x, DXGI_FORMAT_P016,           DXGI_FORMAT_P016,          &DX11PlanarP01x,       2, 3,        CS_YUV,  420,       16,    &CopyFrameAsIs,           nullptr},
-	{CF_YUY2,   MEDIASUBTYPE_YUY2,   "YUY2",   D3DFMT_YUY2,     D3DFMT_A8R8G8B8,       nullptr, DXGI_FORMAT_YUY2,           DXGI_FORMAT_R8G8B8A8_UNORM,        nullptr,       2, 2,        CS_YUV,  422,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_YV16,   MEDIASUBTYPE_YV16,   "YV16",   D3DFMT_UNKNOWN,  D3DFMT_YV16,    &DX9PlanarYV16, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarYV16,       1, 4,        CS_YUV,  422,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_P210,   MEDIASUBTYPE_P210,   "P210",   D3DFMT_P210,     D3DFMT_P210,    &DX9PlanarP21x, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarP21x,       2, 4,        CS_YUV,  422,       10,    &CopyFrameAsIs,           nullptr},
-	{CF_P216,   MEDIASUBTYPE_P216,   "P216",   D3DFMT_P216,     D3DFMT_P216,    &DX9PlanarP21x, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarP21x,       2, 4,        CS_YUV,  422,       16,    &CopyFrameAsIs,           nullptr},
-	{CF_YV24,   MEDIASUBTYPE_YV24,   "YV24",   D3DFMT_UNKNOWN,  D3DFMT_YV24,    &DX9PlanarYV24, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarYV24,       1, 6,        CS_YUV,  444,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_AYUV,   MEDIASUBTYPE_AYUV,   "AYUV",   D3DFMT_UNKNOWN,  D3DFMT_X8R8G8B8,       nullptr, DXGI_FORMAT_AYUV,           DXGI_FORMAT_B8G8R8X8_UNORM,        nullptr,       4, 2,        CS_YUV,  444,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_Y410,   MEDIASUBTYPE_Y410,   "Y410",   D3DFMT_Y410,     D3DFMT_A2B10G10R10,    nullptr, DXGI_FORMAT_Y410,           DXGI_FORMAT_R10G10B10A2_UNORM,     nullptr,       4, 2,        CS_YUV,  444,       10,    &CopyFrameAsIs,           nullptr},
-	{CF_Y416,   MEDIASUBTYPE_Y416,   "Y416",   D3DFMT_Y416,     D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_Y416,           DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       8, 2,        CS_YUV,  444,       16,    &CopyFrameAsIs,           nullptr},
-	{CF_RGB24,  MEDIASUBTYPE_RGB24,  "RGB24",  D3DFMT_X8R8G8B8, D3DFMT_X8R8G8B8,       nullptr, DXGI_FORMAT_B8G8R8X8_UNORM, DXGI_FORMAT_B8G8R8X8_UNORM,        nullptr,       3, 2,        CS_RGB,  444,       8,     &CopyFrameRGB24, &CopyRGB24_SSSE3},
-	{CF_XRGB32, MEDIASUBTYPE_RGB32,  "RGB32",  D3DFMT_X8R8G8B8, D3DFMT_X8R8G8B8,       nullptr, DXGI_FORMAT_B8G8R8X8_UNORM, DXGI_FORMAT_B8G8R8X8_UNORM,        nullptr,       4, 2,        CS_RGB,  444,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_ARGB32, MEDIASUBTYPE_ARGB32, "ARGB32", D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8,       nullptr, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM,        nullptr,       4, 2,        CS_RGB,  444,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_RGB48,  MEDIASUBTYPE_RGB48,  "RGB48",  D3DFMT_UNKNOWN,  D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       6, 2,        CS_RGB,  444,       16,    &CopyFrameRGB48,          nullptr},
-	{CF_B48R,   MEDIASUBTYPE_b48r,   "b48r",   D3DFMT_UNKNOWN,  D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       6, 2,        CS_RGB,  444,       16,    &CopyFrameRGB48,          nullptr},
-	{CF_ARGB64, MEDIASUBTYPE_ARGB64, "ARGB64", D3DFMT_UNKNOWN,  D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       8, 2,        CS_RGB,  444,       16,    &CopyFrameAsIs,           nullptr},
-	{CF_B64A,   MEDIASUBTYPE_b64a,   "b64a",   D3DFMT_UNKNOWN,  D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       8, 2,        CS_RGB,  444,       16,    &CopyFrameB64A,           nullptr},
-	{CF_Y8,     MEDIASUBTYPE_Y8,     "Y8",     D3DFMT_UNKNOWN,  D3DFMT_L8,             nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R8_UNORM,              nullptr,       1, 2,        CS_GRAY, 400,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_Y800,   MEDIASUBTYPE_Y800,   "Y800",   D3DFMT_UNKNOWN,  D3DFMT_L8,             nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R8_UNORM,              nullptr,       1, 2,        CS_GRAY, 400,       8,     &CopyFrameAsIs,           nullptr},
-	{CF_Y116,   MEDIASUBTYPE_Y116,   "Y116",   D3DFMT_UNKNOWN,  D3DFMT_L16,            nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16_UNORM,             nullptr,       2, 2,        CS_GRAY, 400,       16,    &CopyFrameAsIs,           nullptr},
+	// cformat |   subtype          | str      | DXVA2Format    | D3DFormat(DX9)    |pDX9Planes| VP11Format                | DX11Format                |  pDX11Planes  |Packsize|PitchCoeff| CSType|Subsampling|CDepth| Func           |FuncSSSE3
+	{CF_NONE,   GUID_NULL,           nullptr,   D3DFMT_UNKNOWN,  D3DFMT_UNKNOWN,        nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_UNKNOWN,               nullptr,       0, 0,        CS_YUV,    0,       0,     nullptr,                  nullptr},
+	{CF_YV12,   MEDIASUBTYPE_YV12,   L"YV12",   D3DFMT_YV12,     D3DFMT_YV12,    &DX9PlanarYV12, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarYV12,       1, 3,        CS_YUV,  420,       8,     &CopyFrameYV12,           nullptr},
+	{CF_NV12,   MEDIASUBTYPE_NV12,   L"NV12",   D3DFMT_NV12,     D3DFMT_NV12,    &DX9PlanarNV12, DXGI_FORMAT_NV12,           DXGI_FORMAT_NV12,          &DX11PlanarNV12,       1, 3,        CS_YUV,  420,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_P010,   MEDIASUBTYPE_P010,   L"P010",   D3DFMT_P010,     D3DFMT_P010,    &DX9PlanarP01x, DXGI_FORMAT_P010,           DXGI_FORMAT_P010,          &DX11PlanarP01x,       2, 3,        CS_YUV,  420,       10,    &CopyFrameAsIs,           nullptr},
+	{CF_P016,   MEDIASUBTYPE_P016,   L"P016",   D3DFMT_P016,     D3DFMT_P016,    &DX9PlanarP01x, DXGI_FORMAT_P016,           DXGI_FORMAT_P016,          &DX11PlanarP01x,       2, 3,        CS_YUV,  420,       16,    &CopyFrameAsIs,           nullptr},
+	{CF_YUY2,   MEDIASUBTYPE_YUY2,   L"YUY2",   D3DFMT_YUY2,     D3DFMT_A8R8G8B8,       nullptr, DXGI_FORMAT_YUY2,           DXGI_FORMAT_R8G8B8A8_UNORM,        nullptr,       2, 2,        CS_YUV,  422,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_YV16,   MEDIASUBTYPE_YV16,   L"YV16",   D3DFMT_UNKNOWN,  D3DFMT_YV16,    &DX9PlanarYV16, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarYV16,       1, 4,        CS_YUV,  422,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_P210,   MEDIASUBTYPE_P210,   L"P210",   D3DFMT_P210,     D3DFMT_P210,    &DX9PlanarP21x, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarP21x,       2, 4,        CS_YUV,  422,       10,    &CopyFrameAsIs,           nullptr},
+	{CF_P216,   MEDIASUBTYPE_P216,   L"P216",   D3DFMT_P216,     D3DFMT_P216,    &DX9PlanarP21x, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarP21x,       2, 4,        CS_YUV,  422,       16,    &CopyFrameAsIs,           nullptr},
+	{CF_YV24,   MEDIASUBTYPE_YV24,   L"YV24",   D3DFMT_UNKNOWN,  D3DFMT_YV24,    &DX9PlanarYV24, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_PLANAR,        &DX11PlanarYV24,       1, 6,        CS_YUV,  444,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_AYUV,   MEDIASUBTYPE_AYUV,   L"AYUV",   D3DFMT_UNKNOWN,  D3DFMT_X8R8G8B8,       nullptr, DXGI_FORMAT_AYUV,           DXGI_FORMAT_B8G8R8X8_UNORM,        nullptr,       4, 2,        CS_YUV,  444,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_Y410,   MEDIASUBTYPE_Y410,   L"Y410",   D3DFMT_Y410,     D3DFMT_A2B10G10R10,    nullptr, DXGI_FORMAT_Y410,           DXGI_FORMAT_R10G10B10A2_UNORM,     nullptr,       4, 2,        CS_YUV,  444,       10,    &CopyFrameAsIs,           nullptr},
+	{CF_Y416,   MEDIASUBTYPE_Y416,   L"Y416",   D3DFMT_Y416,     D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_Y416,           DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       8, 2,        CS_YUV,  444,       16,    &CopyFrameAsIs,           nullptr},
+	{CF_RGB24,  MEDIASUBTYPE_RGB24,  L"RGB24",  D3DFMT_X8R8G8B8, D3DFMT_X8R8G8B8,       nullptr, DXGI_FORMAT_B8G8R8X8_UNORM, DXGI_FORMAT_B8G8R8X8_UNORM,        nullptr,       3, 2,        CS_RGB,  444,       8,     &CopyFrameRGB24, &CopyRGB24_SSSE3},
+	{CF_XRGB32, MEDIASUBTYPE_RGB32,  L"RGB32",  D3DFMT_X8R8G8B8, D3DFMT_X8R8G8B8,       nullptr, DXGI_FORMAT_B8G8R8X8_UNORM, DXGI_FORMAT_B8G8R8X8_UNORM,        nullptr,       4, 2,        CS_RGB,  444,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_ARGB32, MEDIASUBTYPE_ARGB32, L"ARGB32", D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8,       nullptr, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM,        nullptr,       4, 2,        CS_RGB,  444,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_RGB48,  MEDIASUBTYPE_RGB48,  L"RGB48",  D3DFMT_UNKNOWN,  D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       6, 2,        CS_RGB,  444,       16,    &CopyFrameRGB48,          nullptr},
+	{CF_B48R,   MEDIASUBTYPE_b48r,   L"b48r",   D3DFMT_UNKNOWN,  D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       6, 2,        CS_RGB,  444,       16,    &CopyFrameRGB48,          nullptr},
+	{CF_ARGB64, MEDIASUBTYPE_ARGB64, L"ARGB64", D3DFMT_UNKNOWN,  D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       8, 2,        CS_RGB,  444,       16,    &CopyFrameAsIs,           nullptr},
+	{CF_B64A,   MEDIASUBTYPE_b64a,   L"b64a",   D3DFMT_UNKNOWN,  D3DFMT_A16B16G16R16,   nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16G16B16A16_UNORM,    nullptr,       8, 2,        CS_RGB,  444,       16,    &CopyFrameB64A,           nullptr},
+	{CF_Y8,     MEDIASUBTYPE_Y8,     L"Y8",     D3DFMT_UNKNOWN,  D3DFMT_L8,             nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R8_UNORM,              nullptr,       1, 2,        CS_GRAY, 400,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_Y800,   MEDIASUBTYPE_Y800,   L"Y800",   D3DFMT_UNKNOWN,  D3DFMT_L8,             nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R8_UNORM,              nullptr,       1, 2,        CS_GRAY, 400,       8,     &CopyFrameAsIs,           nullptr},
+	{CF_Y116,   MEDIASUBTYPE_Y16,    L"Y16",    D3DFMT_UNKNOWN,  D3DFMT_L16,            nullptr, DXGI_FORMAT_UNKNOWN,        DXGI_FORMAT_R16_UNORM,             nullptr,       2, 2,        CS_GRAY, 400,       16,    &CopyFrameAsIs,           nullptr},
 };
 // Remarks:
 // 1. The table lists all possible formats. The real situation depends on the capabilities of the graphics card and drivers.
@@ -593,6 +530,8 @@ void set_colorspace(const DXVA2_ExtendedFormat& extfmt, mp_colorspace& colorspac
 	case DXVA2_VideoPrimaries_BT470_2_SysBG: colorspace.primaries = MP_CSP_PRIM_BT_601_625; break;
 	case DXVA2_VideoPrimaries_SMPTE170M:
 	case DXVA2_VideoPrimaries_SMPTE240M:     colorspace.primaries = MP_CSP_PRIM_BT_601_525; break;
+	case VIDEOPRIMARIES_BT2020:              colorspace.primaries = MP_CSP_PRIM_BT_2020;    break;
+	case VIDEOPRIMARIES_DCI_P3:              colorspace.primaries = MP_CSP_PRIM_DCI_P3;     break;
 	default:
 		colorspace.primaries = MP_CSP_PRIM_AUTO;
 	}
@@ -628,14 +567,17 @@ BITMAPINFOHEADER* GetBIHfromVIHs(const AM_MEDIA_TYPE* pmt)
 	return nullptr;
 }
 
-HRESULT SaveARGB32toBMP(BYTE* src, const UINT src_pitch, const UINT width, const UINT height, const wchar_t* filename)
+HRESULT SaveToBMP(BYTE* src, const UINT src_pitch, const UINT width, const UINT height, const UINT bitdepth, const wchar_t* filename)
 {
 	if (!src || !filename) {
 		return E_POINTER;
 	}
 
-	const UINT bitdepth = 32;
-	const UINT tablecolors = /*(bitdepth == 8) ? 256 :*/ 0; // not used yet
+	if (!src_pitch || !width || !height || (bitdepth != 8 && bitdepth != 32)) {
+		return E_ABORT;
+	}
+
+	const UINT tablecolors = (bitdepth == 8) ? 256 : 0;
 	const UINT dst_pitch = width * bitdepth / 8;
 	const UINT len = dst_pitch * height;
 
@@ -643,7 +585,7 @@ HRESULT SaveARGB32toBMP(BYTE* src, const UINT src_pitch, const UINT width, const
 
 	if (dib) {
 		BITMAPINFOHEADER* bih = (BITMAPINFOHEADER*)dib.get();
-		memset(bih, 0, sizeof(BITMAPINFOHEADER));
+		ZeroMemory(bih, sizeof(BITMAPINFOHEADER));
 		bih->biSize = sizeof(BITMAPINFOHEADER);
 		bih->biWidth = width;
 		bih->biHeight = -(LONG)height;
@@ -679,6 +621,100 @@ HRESULT SaveARGB32toBMP(BYTE* src, const UINT src_pitch, const UINT width, const
 	}
 
 	return E_FAIL;
+}
+
+HRESULT SaveToImage(BYTE* src, const UINT pitch, const UINT width, const UINT height, const UINT bitdepth, const std::wstring_view& filename)
+{
+	if (!src) {
+		return E_POINTER;
+	}
+
+	if (!pitch || !width || !height || !filename.length()) {
+		return E_INVALIDARG;
+	}
+
+	WICPixelFormatGUID format = {};
+	if (bitdepth == 32) {
+		format = GUID_WICPixelFormat32bppBGR;
+	}
+	else if (bitdepth == 24) {
+		format = GUID_WICPixelFormat24bppBGR;
+	}
+	else if (bitdepth == 8) {
+		format = GUID_WICPixelFormat8bppGray;
+	}
+	else {
+		return E_INVALIDARG;
+	}
+
+	GUID wicFormat = {};
+	std::wstring ext;
+	ext.assign(filename, filename.find_last_of(L"."));
+	str_tolower(ext);
+	if (ext == L".bmp") {
+		wicFormat = GUID_ContainerFormatBmp;
+	}
+	else if (ext == L".png") {
+		wicFormat = GUID_ContainerFormatPng;
+	}
+	else if (ext == L".jpg" || ext == L".jpeg") {
+		wicFormat = GUID_ContainerFormatJpeg;
+	}
+	else if (ext == L".tif" || ext == L".tiff") {
+		wicFormat = GUID_ContainerFormatTiff;
+	}
+	else {
+		return E_INVALIDARG;
+	}
+
+	CComPtr<IWICImagingFactory> pWICFactory;
+	CComPtr<IWICBitmapEncoder> pEncoder;
+	CComPtr<IWICBitmapFrameEncode> pFrame;
+	CComPtr<IWICStream> pStream;
+
+	HRESULT hr = CoCreateInstance(
+		CLSID_WICImagingFactory1, // we use CLSID_WICImagingFactory1 to support Windows 7 without Platform Update
+		nullptr,
+		CLSCTX_INPROC_SERVER,
+		IID_IWICImagingFactory,
+		(LPVOID*)&pWICFactory
+	);
+
+	if (SUCCEEDED(hr)) {
+		hr = pWICFactory->CreateStream(&pStream);
+	};
+	if (SUCCEEDED(hr)) {
+		hr = pStream->InitializeFromFilename(filename.data(), GENERIC_WRITE);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pWICFactory->CreateEncoder(wicFormat, nullptr, &pEncoder);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pEncoder->Initialize(pStream, WICBitmapEncoderNoCache);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pEncoder->CreateNewFrame(&pFrame, nullptr);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pFrame->Initialize(nullptr);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pFrame->SetSize(width, height);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pFrame->SetPixelFormat(&format);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pFrame->WritePixels(height, pitch, pitch * height, src);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pFrame->Commit();
+	}
+	if (SUCCEEDED(hr)) {
+		hr = pEncoder->Commit();
+	}
+
+	return hr;
 }
 
 DXVA2_ExtendedFormat SpecifyExtendedFormat(DXVA2_ExtendedFormat exFormat, const FmtConvParams_t& fmtParams, const UINT width, const UINT height)
@@ -753,28 +789,4 @@ void GetExtendedFormatString(LPCSTR (&strs)[6], const DXVA2_ExtendedFormat exFor
 		strs[4] = getDesc(exFormat.VideoPrimaries, primaries, std::size(primaries));
 		strs[5] = getDesc(exFormat.VideoTransferFunction, transfunc, std::size(transfunc));
 	}
-}
-
-HRESULT GetDataFromResource(LPVOID& data, DWORD& size, UINT resid)
-{
-	static const HMODULE hModule = (HMODULE)&__ImageBase;
-
-	HRSRC hrsrc = FindResourceW(hModule, MAKEINTRESOURCEW(resid), L"FILE");
-	if (!hrsrc) {
-		return E_INVALIDARG;
-	}
-	HGLOBAL hGlobal = LoadResource(hModule, hrsrc);
-	if (!hGlobal) {
-		return E_FAIL;
-	}
-	size = SizeofResource(hModule, hrsrc);
-	if (!size) {
-		return E_FAIL;
-	}
-	data = LockResource(hGlobal);
-	if (!data) {
-		return E_FAIL;
-	}
-
-	return S_OK;
 }

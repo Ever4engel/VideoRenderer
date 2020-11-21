@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 15
-VisualStudioVersion = 15.0.28307.1022
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30621.155
 MinimumVisualStudioVersion = 15.0.27130.2036
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "MpcVideoRenderer", "Source\MpcVideoRenderer.vcxproj", "{C9CEECB2-947C-4902-BEF9-B98DCAF14B1C}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -15,11 +15,16 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Include", "Include", "{C7CA
 		Include\FilterInterfaces.h = Include\FilterInterfaces.h
 		Include\FilterInterfacesImpl.h = Include\FilterInterfacesImpl.h
 		Include\ID3DVideoMemoryConfiguration.h = Include\ID3DVideoMemoryConfiguration.h
+		Include\IMediaSideData.h = Include\IMediaSideData.h
 		Include\ISubRender.h = Include\ISubRender.h
 		Include\Version.h = Include\Version.h
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Shaders", "Shaders\Shaders.vcxproj", "{3D9A1837-4ECC-45CA-9260-F57AD36C6B5F}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fmt", "external\fmt.vcxproj", "{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "minhook", "external\minhook.vcxproj", "{303B855A-137D-45E9-AF6D-B7241C6E66D6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -57,6 +62,22 @@ Global
 		{3D9A1837-4ECC-45CA-9260-F57AD36C6B5F}.Release|x64.Build.0 = Release|x64
 		{3D9A1837-4ECC-45CA-9260-F57AD36C6B5F}.Release|x86.ActiveCfg = Release|Win32
 		{3D9A1837-4ECC-45CA-9260-F57AD36C6B5F}.Release|x86.Build.0 = Release|Win32
+		{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}.Debug|x64.ActiveCfg = Debug|x64
+		{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}.Debug|x64.Build.0 = Debug|x64
+		{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}.Debug|x86.ActiveCfg = Debug|Win32
+		{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}.Debug|x86.Build.0 = Debug|Win32
+		{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}.Release|x64.ActiveCfg = Release|x64
+		{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}.Release|x64.Build.0 = Release|x64
+		{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}.Release|x86.ActiveCfg = Release|Win32
+		{CF8302E6-21A3-4DD3-8A33-E19B6732F40B}.Release|x86.Build.0 = Release|Win32
+		{303B855A-137D-45E9-AF6D-B7241C6E66D6}.Debug|x64.ActiveCfg = Debug|x64
+		{303B855A-137D-45E9-AF6D-B7241C6E66D6}.Debug|x64.Build.0 = Debug|x64
+		{303B855A-137D-45E9-AF6D-B7241C6E66D6}.Debug|x86.ActiveCfg = Debug|Win32
+		{303B855A-137D-45E9-AF6D-B7241C6E66D6}.Debug|x86.Build.0 = Debug|Win32
+		{303B855A-137D-45E9-AF6D-B7241C6E66D6}.Release|x64.ActiveCfg = Release|x64
+		{303B855A-137D-45E9-AF6D-B7241C6E66D6}.Release|x64.Build.0 = Release|x64
+		{303B855A-137D-45E9-AF6D-B7241C6E66D6}.Release|x86.ActiveCfg = Release|Win32
+		{303B855A-137D-45E9-AF6D-B7241C6E66D6}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
